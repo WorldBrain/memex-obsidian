@@ -1,0 +1,11 @@
+{
+  "name": "obsidian-memex-release",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "sync:public-files": "node scripts/sync-public-files.mjs",
+    "export:release": "node scripts/export-release-artifacts.mjs",
+    "validate": "node scripts/validate-release-repo.mjs"
+  }
+}

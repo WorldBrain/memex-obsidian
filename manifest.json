@@ -1,0 +1,9 @@
+{
+    "id": "memex",
+    "name": "Memex",
+    "version": "0.1.0",
+    "minAppVersion": "1.7.2",
+    "description": "Memex search and Ask sidebar with inline dynamic search views.",
+    "author": "Memex",
+    "isDesktopOnly": true
+}
