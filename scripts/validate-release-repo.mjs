@@ -21,6 +21,12 @@ const REQUIRED_SOURCE_FILES = [
     'scripts/prepare-release.mjs',
 ]
 
+const REQUIRED_PLUGIN_FILES = [
+    'plugin/memex/main.js',
+    'plugin/memex/manifest.json',
+    'plugin/memex/styles.css',
+]
+
 const REQUIRED_PUBLIC_ENVS = ['MEMEX_BASE_URL']
 
 const __filename = fileURLToPath(import.meta.url)
@@ -47,18 +53,30 @@ async function fileExists(absolutePath) {
 }
 
 async function validate() {
-    for (const relativePath of [...REQUIRED_ROOT_FILES, ...REQUIRED_SOURCE_FILES]) {
+    for (const relativePath of [
+        ...REQUIRED_ROOT_FILES,
+        ...REQUIRED_SOURCE_FILES,
+        ...REQUIRED_PLUGIN_FILES,
+    ]) {
         await assertFileExists(relativePath)
     }
 
     const manifest = JSON.parse(
         await readFile(path.join(repoRoot, 'manifest.json'), 'utf8'),
     )
+    const pluginManifest = JSON.parse(
+        await readFile(path.join(repoRoot, 'plugin', 'memex', 'manifest.json'), 'utf8'),
+    )
     const versions = JSON.parse(
         await readFile(path.join(repoRoot, 'versions.json'), 'utf8'),
     )
     const envExample = await readFile(
         path.join(repoRoot, '.env.example'),
+        'utf8',
+    )
+    const rootStyles = await readFile(path.join(repoRoot, 'styles.css'), 'utf8')
+    const pluginStyles = await readFile(
+        path.join(repoRoot, 'plugin', 'memex', 'styles.css'),
         'utf8',
     )
 
@@ -68,6 +86,14 @@ async function validate() {
         throw new Error(
             `versions.json must contain ${manifest.version}: ${manifest.minAppVersion}.`,
         )
+    }
+
+    if (JSON.stringify(pluginManifest) !== JSON.stringify(manifest)) {
+        throw new Error('plugin/memex/manifest.json must match the repo root manifest.json.')
+    }
+
+    if (pluginStyles !== rootStyles) {
+        throw new Error('plugin/memex/styles.css must match the repo root styles.css.')
     }
 
     if (await fileExists(path.join(repoRoot, 'main.js'))) {

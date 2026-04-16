@@ -1,5 +1,5 @@
 import { build, context } from 'esbuild'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { cp, mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -7,6 +7,7 @@ const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 const repoRoot = path.resolve(__dirname, '..')
 const distDir = path.join(repoRoot, 'dist')
+const pluginDir = path.join(repoRoot, 'plugin', 'memex')
 const isWatchMode = process.argv.includes('--watch')
 
 const DEFAULT_ENV = {
@@ -82,6 +83,14 @@ async function copyStaticFiles() {
     )
 }
 
+async function syncPluginFolder() {
+    await mkdir(pluginDir, { recursive: true })
+
+    for (const filename of ['main.js', 'manifest.json', 'styles.css']) {
+        await cp(path.join(distDir, filename), path.join(pluginDir, filename))
+    }
+}
+
 async function buildPlugin() {
     const env = await loadEnv()
     await copyStaticFiles()
@@ -109,6 +118,7 @@ async function buildPlugin() {
     }
 
     await build(buildOptions)
+    await syncPluginFolder()
 }
 
 await buildPlugin()

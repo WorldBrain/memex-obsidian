@@ -18,9 +18,9 @@ Once the plugin is accepted into the Obsidian community directory, install `Meme
 
 ### Manual install
 
-1. Download `main.js`, `manifest.json`, and `styles.css` from the latest release.
+1. Use the tracked `plugin/memex/` folder in this repo, or download `main.js`, `manifest.json`, and `styles.css` from the latest release.
 2. Create `VAULT/.obsidian/plugins/memex/`.
-3. Copy those three files into that folder.
+3. Copy the three plugin files into that folder.
 4. Reload Obsidian and enable the plugin.
 
 ## Use
@@ -40,7 +40,7 @@ npm install
 npm run build
 ```
 
-That writes the bundled plugin entrypoint to `dist/main.js`.
+That writes the bundled plugin entrypoint to `dist/main.js` and also syncs a ready-to-drop plugin folder at `plugin/memex/`.
 
 The only public build-time env var is:
 
@@ -73,6 +73,7 @@ npm run validate
 ```
 
 This checks the required public files, manifest/version consistency, and `.env.example`.
+It also checks that `plugin/memex/` contains the built plugin files that match the tracked manifest and styles.
 
 ## Manifest metadata
 
