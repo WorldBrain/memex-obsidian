@@ -2,6 +2,8 @@ import { getMemexBaseUrl } from './config'
 
 export const OBSIDIAN_SIDEBAR_BRIDGE_VERSION = 1
 export const OBSIDIAN_SIDEBAR_DASHBOARD_PATH = '/dashboard'
+export const OBSIDIAN_SIDEBAR_DASHBOARD_TRAILING_SLASH_PATH = '/dashboard/'
+export const OBSIDIAN_SIDEBAR_EMBED_PATH = '/embed/obsidian-sidebar'
 export const OBSIDIAN_SIDEBAR_HOST_QUERY_PARAM = 'host'
 export const OBSIDIAN_SIDEBAR_HOST_QUERY_VALUE = 'obsidian'
 export const OBSIDIAN_OAUTH_CALLBACK_URL = 'obsidian://memex-auth'
@@ -108,13 +110,32 @@ export function isMemexSidebarIframeMessage(
 }
 
 export function getObsidianSidebarEmbedUrl(): string {
-    const url = new URL(OBSIDIAN_SIDEBAR_DASHBOARD_PATH, getMemexBaseUrl())
-    url.searchParams.set(
-        OBSIDIAN_SIDEBAR_HOST_QUERY_PARAM,
-        OBSIDIAN_SIDEBAR_HOST_QUERY_VALUE,
-    )
+    return getObsidianSidebarEmbedUrls()[0]
+}
 
-    return url.toString()
+export function getObsidianSidebarEmbedUrls(): string[] {
+    const seenUrls = new Set<string>()
+    const buildEmbedUrl = (path: string): string => {
+        const url = new URL(path, getMemexBaseUrl())
+        url.searchParams.set(
+            OBSIDIAN_SIDEBAR_HOST_QUERY_PARAM,
+            OBSIDIAN_SIDEBAR_HOST_QUERY_VALUE,
+        )
+        return url.toString()
+    }
+
+    return [
+        OBSIDIAN_SIDEBAR_DASHBOARD_PATH,
+        OBSIDIAN_SIDEBAR_DASHBOARD_TRAILING_SLASH_PATH,
+        OBSIDIAN_SIDEBAR_EMBED_PATH,
+    ].flatMap((path) => {
+        const url = buildEmbedUrl(path)
+        if (seenUrls.has(url)) {
+            return []
+        }
+        seenUrls.add(url)
+        return [url]
+    })
 }
 
 export function getObsidianHostedAuthUrl(): string {

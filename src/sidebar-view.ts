@@ -3,7 +3,7 @@ import type { MemexObsidianPlugin } from './main'
 import type { MemexSidebarHostMessage } from './bridge-protocol'
 import {
     OBSIDIAN_SIDEBAR_BRIDGE_VERSION,
-    getObsidianSidebarEmbedUrl,
+    getObsidianSidebarEmbedUrls,
 } from './bridge-protocol'
 import { getMemexBaseUrl } from './config'
 import { ObsidianSidebarBridgeController } from './sidebar-bridge-controller'
@@ -21,6 +21,8 @@ export class MemexSidebarView extends ItemView {
     private controller: ObsidianSidebarBridgeController | null = null
     private pendingMessages: MemexSidebarHostMessage[] = []
     private themeObserver: MutationObserver | null = null
+    private embedUrls: string[] = []
+    private currentEmbedUrlIndex = 0
 
     constructor(
         leaf: WorkspaceLeaf,
@@ -44,7 +46,10 @@ export class MemexSidebarView extends ItemView {
             cls: 'memex-obsidian-sidebar-host',
         })
 
-        const embedUrl = getObsidianSidebarEmbedUrl()
+        this.embedUrls = getObsidianSidebarEmbedUrls()
+        this.currentEmbedUrlIndex = 0
+
+        const embedUrl = this.embedUrls[0]
         const iframeOrigin = new URL(embedUrl).origin
         const iframe = document.createElement('iframe')
         iframe.className = 'memex-obsidian-sidebar-iframe'
@@ -62,6 +67,9 @@ export class MemexSidebarView extends ItemView {
                 new Notice('Memex sidebar bridge version mismatch.')
             },
             onReadyTimeout: () => {
+                if (this.retryAlternateEmbedUrl()) {
+                    return
+                }
                 new Notice('Memex sidebar did not finish loading in time.')
             },
             onRequestAuth: () => {
@@ -110,6 +118,8 @@ export class MemexSidebarView extends ItemView {
         this.controller = null
         this.iframe = null
         this.pendingMessages = []
+        this.embedUrls = []
+        this.currentEmbedUrlIndex = 0
     }
 
     openSearchNotes(params: { contentEntityId: string; title: string }): void {
@@ -179,6 +189,22 @@ export class MemexSidebarView extends ItemView {
             attributes: true,
             attributeFilter: ['class'],
         })
+    }
+
+    private retryAlternateEmbedUrl(): boolean {
+        const nextEmbedUrl = this.embedUrls[this.currentEmbedUrlIndex + 1]
+        if (this.iframe == null || this.controller == null || nextEmbedUrl == null) {
+            return false
+        }
+
+        this.currentEmbedUrlIndex += 1
+        console.warn(
+            '[Memex Obsidian] Retrying hosted dashboard load with alternate URL:',
+            nextEmbedUrl,
+        )
+        this.iframe.src = nextEmbedUrl
+        this.controller.handleIframeLoad()
+        return true
     }
 
     private getCurrentTheme(): 'light' | 'dark' {

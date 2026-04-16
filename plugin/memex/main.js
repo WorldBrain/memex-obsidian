@@ -39,6 +39,8 @@ function getMemexBaseUrl() {
 // src/bridge-protocol.ts
 var OBSIDIAN_SIDEBAR_BRIDGE_VERSION = 1;
 var OBSIDIAN_SIDEBAR_DASHBOARD_PATH = "/dashboard";
+var OBSIDIAN_SIDEBAR_DASHBOARD_TRAILING_SLASH_PATH = "/dashboard/";
+var OBSIDIAN_SIDEBAR_EMBED_PATH = "/embed/obsidian-sidebar";
 var OBSIDIAN_SIDEBAR_HOST_QUERY_PARAM = "host";
 var OBSIDIAN_SIDEBAR_HOST_QUERY_VALUE = "obsidian";
 var OBSIDIAN_OAUTH_CALLBACK_URL = "obsidian://memex-auth";
@@ -49,13 +51,28 @@ function isMemexSidebarIframeMessage(value) {
   const candidate = value;
   return typeof candidate.type === "string" && typeof candidate.bridgeVersion === "number";
 }
-function getObsidianSidebarEmbedUrl() {
-  const url = new URL(OBSIDIAN_SIDEBAR_DASHBOARD_PATH, getMemexBaseUrl());
-  url.searchParams.set(
-    OBSIDIAN_SIDEBAR_HOST_QUERY_PARAM,
-    OBSIDIAN_SIDEBAR_HOST_QUERY_VALUE
-  );
-  return url.toString();
+function getObsidianSidebarEmbedUrls() {
+  const seenUrls = /* @__PURE__ */ new Set();
+  const buildEmbedUrl = (path) => {
+    const url = new URL(path, getMemexBaseUrl());
+    url.searchParams.set(
+      OBSIDIAN_SIDEBAR_HOST_QUERY_PARAM,
+      OBSIDIAN_SIDEBAR_HOST_QUERY_VALUE
+    );
+    return url.toString();
+  };
+  return [
+    OBSIDIAN_SIDEBAR_DASHBOARD_PATH,
+    OBSIDIAN_SIDEBAR_DASHBOARD_TRAILING_SLASH_PATH,
+    OBSIDIAN_SIDEBAR_EMBED_PATH
+  ].flatMap((path) => {
+    const url = buildEmbedUrl(path);
+    if (seenUrls.has(url)) {
+      return [];
+    }
+    seenUrls.add(url);
+    return [url];
+  });
 }
 function getObsidianHostedAuthUrl() {
   const url = new URL("/auth", getMemexBaseUrl());
@@ -291,6 +308,8 @@ var MemexSidebarView = class extends import_obsidian.ItemView {
   controller = null;
   pendingMessages = [];
   themeObserver = null;
+  embedUrls = [];
+  currentEmbedUrlIndex = 0;
   getViewType() {
     return MEMEX_OBSIDIAN_VIEW_TYPE;
   }
@@ -302,7 +321,9 @@ var MemexSidebarView = class extends import_obsidian.ItemView {
     const host = this.contentEl.createDiv({
       cls: "memex-obsidian-sidebar-host"
     });
-    const embedUrl = getObsidianSidebarEmbedUrl();
+    this.embedUrls = getObsidianSidebarEmbedUrls();
+    this.currentEmbedUrlIndex = 0;
+    const embedUrl = this.embedUrls[0];
     const iframeOrigin = new URL(embedUrl).origin;
     const iframe = document.createElement("iframe");
     iframe.className = "memex-obsidian-sidebar-iframe";
@@ -319,6 +340,9 @@ var MemexSidebarView = class extends import_obsidian.ItemView {
         new import_obsidian.Notice("Memex sidebar bridge version mismatch.");
       },
       onReadyTimeout: () => {
+        if (this.retryAlternateEmbedUrl()) {
+          return;
+        }
         new import_obsidian.Notice("Memex sidebar did not finish loading in time.");
       },
       onRequestAuth: () => {
@@ -361,6 +385,8 @@ var MemexSidebarView = class extends import_obsidian.ItemView {
     this.controller = null;
     this.iframe = null;
     this.pendingMessages = [];
+    this.embedUrls = [];
+    this.currentEmbedUrlIndex = 0;
   }
   openSearchNotes(params) {
     this.postHostMessage({
@@ -421,6 +447,20 @@ var MemexSidebarView = class extends import_obsidian.ItemView {
       attributes: true,
       attributeFilter: ["class"]
     });
+  }
+  retryAlternateEmbedUrl() {
+    const nextEmbedUrl = this.embedUrls[this.currentEmbedUrlIndex + 1];
+    if (this.iframe == null || this.controller == null || nextEmbedUrl == null) {
+      return false;
+    }
+    this.currentEmbedUrlIndex += 1;
+    console.warn(
+      "[Memex Obsidian] Retrying hosted dashboard load with alternate URL:",
+      nextEmbedUrl
+    );
+    this.iframe.src = nextEmbedUrl;
+    this.controller.handleIframeLoad();
+    return true;
   }
   getCurrentTheme() {
     return document.body.classList.contains("theme-light") ? "light" : "dark";
