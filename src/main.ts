@@ -1,6 +1,7 @@
 import {
     App,
     Editor,
+    MarkdownRenderChild,
     Modal,
     Notice,
     Plugin,
@@ -29,6 +30,30 @@ interface StoredPluginData {
 
 const DEFAULT_DATA: StoredPluginData = {
     authSession: null,
+}
+
+class ResultCardRenderChild extends MarkdownRenderChild {
+    constructor(
+        containerEl: HTMLElement,
+        private readonly plugin: MemexObsidianPlugin,
+        private readonly source: string,
+    ) {
+        super(containerEl)
+    }
+
+    onload(): void {
+        renderMemexResultCardBlock({
+            app: this.plugin.app,
+            containerEl: this.containerEl,
+            plugin: this.plugin,
+            source: this.source,
+            onOpenNotes: (params) => this.plugin.openSearchNotesInSidebar(params),
+        })
+    }
+
+    onunload(): void {
+        this.containerEl.replaceChildren()
+    }
 }
 
 class CallbackUrlModal extends Modal {
@@ -163,14 +188,8 @@ export class MemexObsidianPlugin extends Plugin {
 
         this.registerMarkdownCodeBlockProcessor(
             MEMEX_RESULT_CARD_CODE_BLOCK_LANGUAGE,
-            (source, el) => {
-                renderMemexResultCardBlock({
-                    app: this.app,
-                    containerEl: el,
-                    plugin: this,
-                    source,
-                    onOpenNotes: (params) => this.openSearchNotesInSidebar(params),
-                })
+            (source, el, context) => {
+                context.addChild(new ResultCardRenderChild(el, this, source))
             },
         )
     }

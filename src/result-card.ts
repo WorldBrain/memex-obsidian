@@ -16,6 +16,10 @@ interface BasicContentEntity {
     description?: string
 }
 
+interface BasicTagEntity {
+    id: string
+}
+
 type MemexResultCardSnippet =
     | string
     | {
@@ -28,6 +32,8 @@ export interface MemexResultCardPayload {
     kind: 'memex-result-card'
     entity: BasicContentEntity
     snippets?: MemexResultCardSnippet[]
+    tagEntities?: BasicTagEntity[]
+    relatedContentEntities?: BasicContentEntity[]
 }
 
 export function parseMemexResultCardPayload(
@@ -58,6 +64,14 @@ export function parseMemexResultCardPayload(
             entity: parsed.entity as BasicContentEntity,
             snippets: Array.isArray(parsed.snippets)
                 ? (parsed.snippets as MemexResultCardSnippet[])
+                : undefined,
+            tagEntities: Array.isArray(parsed.tagEntities)
+                ? (parsed.tagEntities as BasicTagEntity[])
+                : undefined,
+            relatedContentEntities: Array.isArray(
+                parsed.relatedContentEntities,
+            )
+                ? (parsed.relatedContentEntities as BasicContentEntity[])
                 : undefined,
         }
     } catch {
@@ -172,6 +186,9 @@ export function renderMemexResultCardBlock(params: {
         return
     }
 
+    const block = document.createElement('div')
+    block.className = 'memex-obsidian-result-card-block'
+
     const card = document.createElement('div')
     card.className = 'memex-obsidian-result-card'
 
@@ -219,5 +236,6 @@ export function renderMemexResultCardBlock(params: {
     )
 
     card.appendChild(actions)
-    params.containerEl.appendChild(card)
+    block.appendChild(card)
+    params.containerEl.appendChild(block)
 }

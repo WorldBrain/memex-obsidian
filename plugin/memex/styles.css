@@ -29,6 +29,14 @@
     background: transparent;
 }
 
+.memex-obsidian-result-card-block {
+    margin: 1rem 0;
+}
+
+.memex-obsidian-result-card-block > * {
+    max-width: 100%;
+}
+
 .memex-obsidian-result-card {
     display: flex;
     flex-direction: column;

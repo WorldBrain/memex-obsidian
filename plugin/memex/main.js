@@ -100,7 +100,11 @@ function parseMemexResultCardPayload(source) {
       v: 1,
       kind: "memex-result-card",
       entity: parsed.entity,
-      snippets: Array.isArray(parsed.snippets) ? parsed.snippets : void 0
+      snippets: Array.isArray(parsed.snippets) ? parsed.snippets : void 0,
+      tagEntities: Array.isArray(parsed.tagEntities) ? parsed.tagEntities : void 0,
+      relatedContentEntities: Array.isArray(
+        parsed.relatedContentEntities
+      ) ? parsed.relatedContentEntities : void 0
     };
   } catch {
     return null;
@@ -170,6 +174,8 @@ function renderMemexResultCardBlock(params) {
     params.containerEl.appendChild(error);
     return;
   }
+  const block = document.createElement("div");
+  block.className = "memex-obsidian-result-card-block";
   const card = document.createElement("div");
   card.className = "memex-obsidian-result-card";
   const header = document.createElement("div");
@@ -208,7 +214,8 @@ function renderMemexResultCardBlock(params) {
     })
   );
   card.appendChild(actions);
-  params.containerEl.appendChild(card);
+  block.appendChild(card);
+  params.containerEl.appendChild(block);
 }
 
 // src/sidebar-view.ts
@@ -472,6 +479,25 @@ var OAUTH_PROTOCOL_ACTION = "memex-auth";
 var DEFAULT_DATA = {
   authSession: null
 };
+var ResultCardRenderChild = class extends import_obsidian2.MarkdownRenderChild {
+  constructor(containerEl, plugin, source) {
+    super(containerEl);
+    this.plugin = plugin;
+    this.source = source;
+  }
+  onload() {
+    renderMemexResultCardBlock({
+      app: this.plugin.app,
+      containerEl: this.containerEl,
+      plugin: this.plugin,
+      source: this.source,
+      onOpenNotes: (params) => this.plugin.openSearchNotesInSidebar(params)
+    });
+  }
+  onunload() {
+    this.containerEl.replaceChildren();
+  }
+};
 var CallbackUrlModal = class extends import_obsidian2.Modal {
   constructor(app, onSubmit) {
     super(app);
@@ -564,14 +590,8 @@ var MemexObsidianPlugin = class extends import_obsidian2.Plugin {
     );
     this.registerMarkdownCodeBlockProcessor(
       MEMEX_RESULT_CARD_CODE_BLOCK_LANGUAGE,
-      (source, el) => {
-        renderMemexResultCardBlock({
-          app: this.app,
-          containerEl: el,
-          plugin: this,
-          source,
-          onOpenNotes: (params) => this.openSearchNotesInSidebar(params)
-        });
+      (source, el, context) => {
+        context.addChild(new ResultCardRenderChild(el, this, source));
       }
     );
   }
