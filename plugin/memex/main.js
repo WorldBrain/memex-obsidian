@@ -406,6 +406,13 @@ var MemexSidebarView = class extends import_obsidian.ItemView {
       }
     });
   }
+  syncAuthSession(session) {
+    this.postHostMessage({
+      type: "memex:host:auth-session",
+      bridgeVersion: OBSIDIAN_SIDEBAR_BRIDGE_VERSION,
+      session
+    });
+  }
   async sendInitialHostState() {
     this.postHostMessage({
       type: "memex:host:init",
@@ -659,6 +666,7 @@ var MemexObsidianPlugin = class extends import_obsidian2.Plugin {
         authSession: session
       };
       await this.persistPluginData();
+      this.syncAuthSessionToOpenSidebars();
       new import_obsidian2.Notice("Memex login complete.");
     } catch (error) {
       new import_obsidian2.Notice(
@@ -675,6 +683,18 @@ var MemexObsidianPlugin = class extends import_obsidian2.Plugin {
   }
   async persistPluginData() {
     await this.saveData(this.dataState);
+  }
+  syncAuthSessionToOpenSidebars() {
+    const sidebarLeaves = this.app.workspace.getLeavesOfType(
+      MEMEX_OBSIDIAN_VIEW_TYPE
+    );
+    for (const leaf of sidebarLeaves) {
+      const sidebarView = leaf.view;
+      if (!(sidebarView instanceof MemexSidebarView)) {
+        continue;
+      }
+      sidebarView.syncAuthSession(this.dataState.authSession);
+    }
   }
   async handleProtocolCallback(params) {
     const callbackUrl = this.buildCallbackUrlFromProtocolParams(params);

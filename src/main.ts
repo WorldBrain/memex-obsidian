@@ -278,6 +278,7 @@ export class MemexObsidianPlugin extends Plugin {
                 authSession: session,
             }
             await this.persistPluginData()
+            this.syncAuthSessionToOpenSidebars()
             new Notice('Memex login complete.')
         } catch (error) {
             new Notice(
@@ -298,6 +299,21 @@ export class MemexObsidianPlugin extends Plugin {
 
     private async persistPluginData(): Promise<void> {
         await this.saveData(this.dataState)
+    }
+
+    private syncAuthSessionToOpenSidebars(): void {
+        const sidebarLeaves = this.app.workspace.getLeavesOfType(
+            MEMEX_OBSIDIAN_VIEW_TYPE,
+        )
+
+        for (const leaf of sidebarLeaves) {
+            const sidebarView = leaf.view
+            if (!(sidebarView instanceof MemexSidebarView)) {
+                continue
+            }
+
+            sidebarView.syncAuthSession(this.dataState.authSession)
+        }
     }
 
     private async handleProtocolCallback(

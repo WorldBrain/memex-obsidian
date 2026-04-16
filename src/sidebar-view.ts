@@ -1,6 +1,9 @@
 import { ItemView, Notice, WorkspaceLeaf } from 'obsidian'
 import type { MemexObsidianPlugin } from './main'
-import type { MemexSidebarHostMessage } from './bridge-protocol'
+import type {
+    AuthSessionPayload,
+    MemexSidebarHostMessage,
+} from './bridge-protocol'
 import {
     OBSIDIAN_SIDEBAR_BRIDGE_VERSION,
     getObsidianSidebarEmbedUrls,
@@ -131,6 +134,14 @@ export class MemexSidebarView extends ItemView {
                 contentEntityId: params.contentEntityId,
                 title: params.title,
             },
+        })
+    }
+
+    syncAuthSession(session: AuthSessionPayload | null): void {
+        this.postHostMessage({
+            type: 'memex:host:auth-session',
+            bridgeVersion: OBSIDIAN_SIDEBAR_BRIDGE_VERSION,
+            session,
         })
     }
 
