@@ -1,85 +1,96 @@
 # Memex for Obsidian
 
-This repository is the public release and submission repository for the Memex Obsidian plugin.
+This repository is the standalone source-of-truth for the Memex Obsidian plugin.
 
-The plugin implementation currently ships from the Memex monorepo, and this repo keeps the Obsidian-facing files required for submission and releases:
+It contains the plugin source, build scripts, release scripts, and the public runtime configuration needed to build the plugin without relying on another repo.
 
-- `README.md`
-- `LICENSE`
-- `manifest.json`
-- `versions.json`
-- `styles.css`
-
-This repo intentionally does not commit `main.js`. Obsidian's release guidance expects `main.js` to be attached to GitHub releases, not stored in the repository history.
+The repo intentionally does not commit `main.js` at the root. Obsidian expects `main.js` to be attached to GitHub releases instead of being stored in git history.
 
 ## What the plugin does
 
-Memex adds a sidebar and inline search blocks to Obsidian so you can search and ask questions against your Memex account from inside your vault.
+Memex adds a sidebar and inline result cards to Obsidian so you can search, cite, and chat with your Memex account from inside your vault.
 
-## How to use it
+## Install
 
-1. Install the plugin and open the Memex plugin settings in Obsidian.
-2. Click `Login` to sign in to your Memex account in your browser.
-3. Run the `Toggle Memex Sidebar` command to open the sidebar.
-4. Search your Memex content, open notes from results, and drag supported results into notes as Memex result card blocks.
+### Community install
 
-If the OAuth redirect does not complete automatically on your machine, use `Paste Callback URL` in the plugin settings and paste the full `obsidian://memex-auth?...` callback URL from your browser.
+Once the plugin is accepted into the Obsidian community directory, install `Memex` from Obsidian's Community Plugins browser.
 
-The current manifest metadata is:
+### Manual install
+
+1. Download `main.js`, `manifest.json`, and `styles.css` from the latest release.
+2. Create `VAULT/.obsidian/plugins/memex/`.
+3. Copy those three files into that folder.
+4. Reload Obsidian and enable the plugin.
+
+## Use
+
+1. Open the Memex plugin settings in Obsidian.
+2. Click `Login with Memex`.
+3. If the redirect does not complete automatically, click `Paste Callback URL` and paste the full `obsidian://memex-auth?...` callback URL from your browser.
+4. Run `Toggle Memex Sidebar` to open the hosted Memex sidebar inside Obsidian.
+5. Drag supported Memex results into notes to insert `memex-card` blocks.
+
+## Build
+
+This plugin is buildable directly from this repo.
+
+```bash
+npm install
+npm run build
+```
+
+That writes the bundled plugin entrypoint to `dist/main.js`.
+
+The only public build-time env var is:
+
+- `MEMEX_BASE_URL`
+
+The default production value is:
+
+```bash
+MEMEX_BASE_URL=https://memex.garden
+```
+
+You can override it locally by copying `.env.example` to `.env` and changing the value.
+
+## Local release prep
+
+```bash
+npm run release:prepare
+```
+
+That writes release-ready artifacts to `dist/release/<version>/`:
+
+- `main.js`
+- `manifest.json`
+- `styles.css`
+
+## Validation
+
+```bash
+npm run validate
+```
+
+This checks the required public files, manifest/version consistency, and `.env.example`.
+
+## Manifest metadata
 
 - Plugin ID: `memex`
 - Display name: `Memex`
 - Minimum Obsidian version: `1.7.2`
 - Desktop only: `true`
 
-## Release Flow
-
-This repo follows the release steps from Obsidian's submission guide:
-
-1. Update `manifest.json` with the next semantic version.
-2. Update `versions.json` so the plugin version maps to the minimum supported Obsidian version.
-3. Build the plugin in the Memex monorepo:
-   `npm run build:obsidian:plugin:prod`
-4. Export release assets into this repo:
-   `node scripts/export-release-artifacts.mjs /absolute/path/to/memex-v2-monorepo`
-5. Create a GitHub release whose tag exactly matches `manifest.json`'s `version`.
-6. Upload these three release assets:
-   - `main.js`
-   - `manifest.json`
-   - `styles.css`
-
-You can also refresh the public repo files directly from the monorepo source with:
-
-`node scripts/sync-public-files.mjs /absolute/path/to/memex-v2-monorepo`
-
-## Required Public Env Vars
-
-The Obsidian plugin build uses these client-visible Vite env vars:
-
-- `VITE_OBSIDIAN_SIDEBAR_BASE_URL`
-- `VITE_SUPABASE_URL`
-- `VITE_SUPABASE_ANON_KEY`
-- `VITE_FUNCTIONS_URL`
-
-An example file is included at `.env.example`.
-
 ## Disclosures
 
-The Obsidian submission checklist expects relevant disclosures in the README. Current disclosures for this plugin:
-
-- A Memex account is required to log in and use hosted search or ask features.
-- The plugin makes network requests to the Memex hosted app, Memex backend functions, and Supabase endpoints configured through the public env vars above.
-- The plugin stores authentication and session data locally through the Obsidian runtime and Supabase client session storage.
+- A Memex account is required to use the hosted search and chat features.
+- The plugin embeds the hosted Memex web app inside an Obsidian sidebar.
+- The plugin opens the hosted Memex auth flow in your browser and stores the returned access and refresh tokens in Obsidian plugin data on your machine.
 - The plugin can insert Memex result card code blocks into notes when you explicitly drag a result into the editor.
 - The plugin is desktop-only.
-- The released Obsidian plugin bundle does not include client-side telemetry.
+- The released plugin bundle does not include client-side telemetry.
 - The plugin does not include ads.
-- The plugin source code is public in the Memex monorepo linked below.
 
-## Source of Truth
+## Source availability
 
-The active implementation currently lives in the Memex monorepo:
-
-[WorldBrain/memex-v2](https://github.com/WorldBrain/memex-v2)
-
-This release repo is meant to satisfy Obsidian's repository and release expectations while the plugin code is still built from the monorepo.
+This repo is the public source for the plugin implementation and release process.

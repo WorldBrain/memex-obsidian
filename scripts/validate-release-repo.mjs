@@ -3,20 +3,25 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const REQUIRED_ROOT_FILES = [
-    'README.md',
-    'LICENSE',
-    'manifest.json',
-    'versions.json',
-    'styles.css',
     '.env.example',
+    'LICENSE',
+    'README.md',
+    'manifest.json',
+    'package.json',
+    'styles.css',
+    'tsconfig.json',
+    'versions.json',
 ]
 
-const REQUIRED_PUBLIC_ENVS = [
-    'VITE_OBSIDIAN_SIDEBAR_BASE_URL',
-    'VITE_SUPABASE_URL',
-    'VITE_SUPABASE_ANON_KEY',
-    'VITE_FUNCTIONS_URL',
+const REQUIRED_SOURCE_FILES = [
+    'src/main.ts',
+    'src/result-card.ts',
+    'src/sidebar-view.ts',
+    'scripts/build.mjs',
+    'scripts/prepare-release.mjs',
 ]
+
+const REQUIRED_PUBLIC_ENVS = ['MEMEX_BASE_URL']
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -32,8 +37,17 @@ function assertSemver(version) {
     }
 }
 
+async function fileExists(absolutePath) {
+    try {
+        await access(absolutePath)
+        return true
+    } catch {
+        return false
+    }
+}
+
 async function validate() {
-    for (const relativePath of REQUIRED_ROOT_FILES) {
+    for (const relativePath of [...REQUIRED_ROOT_FILES, ...REQUIRED_SOURCE_FILES]) {
         await assertFileExists(relativePath)
     }
 
@@ -58,7 +72,7 @@ async function validate() {
 
     if (await fileExists(path.join(repoRoot, 'main.js'))) {
         throw new Error(
-            'main.js should not be committed at the repo root. Attach it to releases instead.',
+            'main.js should not be committed at the repo root. Build it into dist/ and attach it to releases instead.',
         )
     }
 
@@ -68,16 +82,7 @@ async function validate() {
         }
     }
 
-    console.log('Release repo validation passed.')
-}
-
-async function fileExists(absolutePath) {
-    try {
-        await access(absolutePath)
-        return true
-    } catch {
-        return false
-    }
+    console.log('Standalone plugin repo validation passed.')
 }
 
 await validate()
