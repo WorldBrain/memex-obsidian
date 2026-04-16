@@ -2,6 +2,5 @@
 .env
 dist/
 main.js
-!plugin/memex/main.js
 *.log
 node_modules/
