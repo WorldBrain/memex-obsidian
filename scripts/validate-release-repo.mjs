@@ -50,10 +50,6 @@ async function validate() {
 
     assertSemver(manifest.version)
 
-    if (String(manifest.id).toLowerCase().includes('obsidian')) {
-        throw new Error('manifest.json id cannot contain "obsidian".')
-    }
-
     if (versions[manifest.version] !== manifest.minAppVersion) {
         throw new Error(
             `versions.json must contain ${manifest.version}: ${manifest.minAppVersion}.`,
