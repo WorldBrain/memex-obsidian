@@ -9,7 +9,10 @@ import type {
     TwitterProfileContentEntity,
 } from '@memex/common/features/page-interactions/types'
 import { getContentEntityUrl } from '@memex/common/features/page-interactions/utils'
-import { findAnnotationTargetReferenceId } from '@memex/common/features/annotations/util/reference-content-ids'
+import {
+    findAnnotationTargetReferenceId,
+    getAnnotationReferenceContentIds,
+} from '@memex/common/features/annotations/util/reference-content-ids'
 import { parseMemexResultCardPayload } from '~/features/obsidian/result-card-format'
 import { UniversalResultCard } from '~/features/search/ui/result-cards'
 import { getAnnotationTitle } from '~/features/search/ui/utils/safe-content'
@@ -30,9 +33,22 @@ const PayloadScopedContext: React.FC<
             ...(context.globalState.contentEntities ?? {}),
             [entity.id]: entity,
         }
+        const mergedReferencesByContentEntityId = {
+            ...(context.globalState.referencesByContentEntityId ?? {}),
+        }
 
         for (const relatedEntity of relatedContentEntities ?? []) {
             mergedContentEntities[relatedEntity.id] = relatedEntity
+        }
+        if (relatedContentEntities?.length) {
+            mergedReferencesByContentEntityId[entity.id] = {
+                contentEntityIds: relatedContentEntities.map(
+                    (relatedEntity) => relatedEntity.id,
+                ),
+                tagIds:
+                    context.globalState.referencesByContentEntityId[entity.id]
+                        ?.tagIds ?? [],
+            }
         }
 
         const mergedTagEntities = {
@@ -48,6 +64,7 @@ const PayloadScopedContext: React.FC<
             globalState: {
                 ...context.globalState,
                 contentEntities: mergedContentEntities,
+                referencesByContentEntityId: mergedReferencesByContentEntityId,
                 tags: {
                     ...(context.globalState.tags ?? {}),
                     tagEntities: mergedTagEntities,
@@ -109,9 +126,13 @@ const RenderedResultCard: React.FC<{
                     context.globalState.contentEntities[id] as
                         | ContentEntity
                         | undefined,
+                getRelatedContentIds: (id) =>
+                    context.globalState.referencesByContentEntityId[id]
+                        ?.contentEntityIds,
             }) ?? null,
         [
             context.globalState.contentEntities,
+            context.globalState.referencesByContentEntityId,
             context.globalState.user?.id,
             entity,
         ],
@@ -121,16 +142,22 @@ const RenderedResultCard: React.FC<{
             return entity.id
         }
 
+        const annotationReferenceIds = getAnnotationReferenceContentIds({
+            annotationContent: (entity as AnnotationEntity).content,
+            relatedContentIds:
+                context.globalState.referencesByContentEntityId[entity.id]
+                    ?.contentEntityIds,
+        })
+
         return (
             findAnnotationTargetReferenceId({
                 annotationContent: (entity as AnnotationEntity).content,
-                referenceContentIds: (entity as AnnotationEntity)
-                    .reference_content_ids,
+                referenceContentIds: annotationReferenceIds,
             }) ??
-            (entity as AnnotationEntity).reference_content_ids?.[0] ??
+            annotationReferenceIds[0] ??
             entity.id
         )
-    }, [entity])
+    }, [context.globalState.referencesByContentEntityId, entity])
     const notesTargetEntity = React.useMemo(
         () =>
             context.globalState.contentEntities[notesTargetContentId] ?? entity,
