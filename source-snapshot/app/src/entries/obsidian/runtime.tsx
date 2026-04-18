@@ -12,6 +12,7 @@ import { OverlayProvider } from '~/features/in-page-ui/ui/overlay-provider'
 import { getObsidianHostedAuthUrl } from '~/features/obsidian/sidebar-iframe-bridge'
 import type { OptionsContextType } from '~/options-script/types'
 import { ExtUIContext } from '~/ui-scripts/context-provider'
+import { OBSIDIAN_INLINE_RESULT_CARD_ICONS } from './inline-result-card-icons'
 
 export interface ObsidianRuntimeContextValue extends Omit<
     OptionsContextType,
@@ -48,6 +49,7 @@ export class ObsidianRuntime {
             disableSystemThemeDetection: true,
             initialTheme: 'dark',
             resolveRuntimeUrl: this.options.resolveRuntimeUrl,
+            inlineIcons: OBSIDIAN_INLINE_RESULT_CARD_ICONS,
         })
 
         await context.globalLogic.initialize()
