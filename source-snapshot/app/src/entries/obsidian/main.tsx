@@ -84,6 +84,7 @@ class CallbackUrlModal extends Modal {
 
 class ResultCardRenderChild extends MarkdownRenderChild {
     private root: Root | null = null
+    private stopContainerClickHandling: (() => void) | null = null
 
     constructor(
         containerEl: HTMLElement,
@@ -107,11 +108,117 @@ class ResultCardRenderChild extends MarkdownRenderChild {
                 }
             />,
         )
+        this.stopContainerClickHandling = this.registerContainerClickHandling()
     }
 
     onunload(): void {
+        this.stopContainerClickHandling?.()
+        this.stopContainerClickHandling = null
         this.root?.unmount()
         this.root = null
+    }
+
+    private findInteractiveAncestorWithinContainer(
+        target: HTMLElement | null,
+    ): HTMLElement | null {
+        if (target == null) {
+            return null
+        }
+
+        const interactiveTargetSelector = [
+            'a[href]',
+            'button',
+            'input',
+            'textarea',
+            'select',
+            '[contenteditable="true"]',
+            '[data-result-card-interactive="true"]',
+            '[data-inline-video-player="true"]',
+            '[data-result-card-action-menu="true"]',
+            '[data-result-card-tag-pill="true"]',
+            '[data-testid="mobile-action-sheet-panel"]',
+        ].join(',')
+
+        let current: HTMLElement | null = target
+        while (current != null && current !== this.containerEl) {
+            if (current.matches(interactiveTargetSelector)) {
+                return current
+            }
+            current = current.parentElement
+        }
+
+        return null
+    }
+
+    private registerContainerClickHandling(): () => void {
+        const handleContainerClick = (event: MouseEvent) => {
+            const target = event.target as HTMLElement | null
+            const matchedInteractiveAncestor =
+                this.findInteractiveAncestorWithinContainer(target)
+            if (target == null) {
+                return
+            }
+
+            if (matchedInteractiveAncestor != null) {
+                return
+            }
+
+            const resultCardBlock = this.containerEl.querySelector(
+                '.memex-obsidian-result-card-block',
+            ) as HTMLElement | null
+            const cardRoot = this.containerEl.querySelector(
+                '[data-content-id]',
+            ) as HTMLElement | null
+
+            if (resultCardBlock == null || cardRoot == null) {
+                return
+            }
+
+            const isShrinkable =
+                cardRoot.getAttribute('data-result-card-shrinkable') === 'true'
+            const isExpanded =
+                cardRoot.getAttribute('data-result-card-expanded') === 'true'
+
+            if (event.shiftKey) {
+                const notesContentEntityId =
+                    resultCardBlock.dataset.notesContentId
+                const notesTitle = resultCardBlock.dataset.notesTitle
+                if (!notesContentEntityId || !notesTitle) {
+                    return
+                }
+
+                event.preventDefault()
+                event.stopPropagation()
+                void this.plugin.openSearchNotesInSidebar({
+                    contentEntityId: notesContentEntityId,
+                    title: notesTitle,
+                })
+                return
+            }
+
+            if (isShrinkable && !isExpanded) {
+                return
+            }
+
+            const resultUrl = resultCardBlock.dataset.resultUrl
+            if (!resultUrl) {
+                return
+            }
+
+            event.preventDefault()
+            event.stopPropagation()
+            void this.plugin.openExternalUrl(resultUrl)
+        }
+
+        this.containerEl.addEventListener('click', handleContainerClick, true)
+
+        return () => {
+            this.containerEl.removeEventListener(
+                'click',
+                handleContainerClick,
+                true,
+            )
+        }
     }
 }
 

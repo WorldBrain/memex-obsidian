@@ -17,6 +17,8 @@ import { parseMemexResultCardPayload } from '~/features/obsidian/result-card-for
 import { UniversalResultCard } from '~/features/search/ui/result-cards'
 import { getAnnotationTitle } from '~/features/search/ui/utils/safe-content'
 import { ExtUIContext, useUIContext } from '~/ui-scripts/context-provider'
+import { buildLoadedContentEntityCacheEntries } from '~/features/global-ui-state/ui/content-entity-cache'
+import { openExternalUrlWithAnchor } from './external-url'
 import { ObsidianRuntime, ObsidianRuntimeProvider } from './runtime'
 
 const PayloadScopedContext: React.FC<
@@ -31,14 +33,19 @@ const PayloadScopedContext: React.FC<
     const scopedContext = React.useMemo(() => {
         const mergedContentEntities = {
             ...(context.globalState.contentEntities ?? {}),
-            [entity.id]: entity,
         }
         const mergedReferencesByContentEntityId = {
             ...(context.globalState.referencesByContentEntityId ?? {}),
         }
 
-        for (const relatedEntity of relatedContentEntities ?? []) {
-            mergedContentEntities[relatedEntity.id] = relatedEntity
+        for (const [
+            cacheKey,
+            contentEntity,
+        ] of buildLoadedContentEntityCacheEntries([
+            entity,
+            ...(relatedContentEntities ?? []),
+        ])) {
+            mergedContentEntities[cacheKey] = contentEntity
         }
         if (relatedContentEntities?.length) {
             mergedReferencesByContentEntityId[entity.id] = {
@@ -109,14 +116,6 @@ const getEntityTitle = (entity: ContentEntity): string => {
     return entity.id
 }
 
-const isInteractiveInlineCardTarget = (target: EventTarget | null): boolean => {
-    if (!(target instanceof HTMLElement)) {
-        return false
-    }
-
-    return target.closest('a[href]') != null
-}
-
 const RenderedResultCard: React.FC<{
     entity: ContentEntity
     snippets?: Array<string | { text: string; offset: number }>
@@ -182,7 +181,7 @@ const RenderedResultCard: React.FC<{
             return
         }
 
-        window.open(url, '_blank', 'noopener,noreferrer')
+        openExternalUrlWithAnchor(url)
     }, [url])
 
     const handleOpenNotes = React.useCallback(async () => {
@@ -204,23 +203,12 @@ const RenderedResultCard: React.FC<{
         [handleOpen, handleOpenNotes],
     )
 
-    const handleWrapperClickCapture = React.useCallback(
-        (event: React.MouseEvent<HTMLDivElement>) => {
-            if (isInteractiveInlineCardTarget(event.target)) {
-                return
-            }
-
-            event.preventDefault()
-            event.stopPropagation()
-            handleCardClick(event)
-        },
-        [handleCardClick],
-    )
-
     return (
         <div
             className="memex-obsidian-result-card-block memex-obsidian-result-card-block-clickable"
-            onClickCapture={handleWrapperClickCapture}
+            data-result-url={url ?? ''}
+            data-notes-content-id={notesTargetContentId}
+            data-notes-title={notesTargetTitle}
             title={
                 url
                     ? 'Click to open original document. Shift+click to open notes in Memex sidebar.'
@@ -231,7 +219,6 @@ const RenderedResultCard: React.FC<{
                 entity={entity}
                 snippets={snippets}
                 disableActions
-                disableClickToExpand
                 onOpenExternalUrl={onOpenExternalUrl}
                 onClick={handleCardClick}
             />

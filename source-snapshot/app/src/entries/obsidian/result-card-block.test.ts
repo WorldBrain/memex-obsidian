@@ -7,50 +7,79 @@ import { ThemeProvider } from '@memex/common/features/ui-theme/provider'
 import { ExtUIContext } from '~/ui-scripts/context-provider'
 import { ObsidianResultCardBlock } from './result-card-block'
 
-vi.mock('./runtime', () => ({
-    ObsidianRuntimeProvider: ({
-        children,
-    }: {
-        children?: React.ReactNode
-        runtime: unknown
-    }) => React.createElement(React.Fragment, null, children),
+const { openExternalUrlWithAnchorMock } = vi.hoisted(() => ({
+    openExternalUrlWithAnchorMock: vi.fn(),
 }))
 
-vi.mock('~/features/search/ui/result-cards', () => ({
-    UniversalResultCard: ({
-        onClick,
-    }: {
-        onClick?: (event?: React.MouseEvent) => void
-    }) =>
+vi.mock('./external-url', () => ({
+    openExternalUrlWithAnchor: openExternalUrlWithAnchorMock,
+}))
+
+function MockObsidianRuntimeProvider({
+    children,
+}: {
+    children?: React.ReactNode
+    runtime: unknown
+}) {
+    return React.createElement(React.Fragment, null, children)
+}
+
+vi.mock('./runtime', () => ({
+    ObsidianRuntimeProvider: MockObsidianRuntimeProvider,
+}))
+
+function MockUniversalResultCard({
+    onClick,
+}: {
+    onClick?: (event?: React.MouseEvent) => void
+}) {
+    const context = React.useContext(ExtUIContext)
+    const [isExpanded, setIsExpanded] = React.useState(false)
+
+    return React.createElement(
+        'div',
+        {
+            ['data-testid']: 'inline-card',
+            ['data-content-id']: 'page-1',
+            ['data-has-cached-target-page']:
+                context?.globalState.contentEntities['target-page-1'] != null
+                    ? 'true'
+                    : 'false',
+            ['data-result-card-shrinkable']: 'true',
+            ['data-result-card-expanded']: isExpanded ? 'true' : 'false',
+            onClick: (event: React.MouseEvent<HTMLDivElement>) => {
+                if (
+                    (event.target as HTMLElement | null)?.closest('a') != null
+                ) {
+                    return
+                }
+
+                if (!isExpanded) {
+                    setIsExpanded(true)
+                    return
+                }
+
+                onClick?.(event)
+            },
+        },
         React.createElement(
             'div',
-            {
-                ['data-testid']: 'inline-card',
-                onClick: (event: React.MouseEvent<HTMLDivElement>) => {
-                    if (
-                        (event.target as HTMLElement | null)?.closest('a') !=
-                        null
-                    ) {
-                        return
-                    }
-
-                    onClick?.(event)
-                },
-            },
-            React.createElement(
-                'div',
-                { ['data-testid']: 'plain-area' },
-                'Plain card content',
-            ),
-            React.createElement(
-                'a',
-                {
-                    href: 'https://example.com/inside-link',
-                    ['data-testid']: 'inner-link',
-                },
-                'Inner link',
-            ),
+            { ['data-testid']: 'plain-area' },
+            isExpanded ? 'Expanded card content' : 'Plain card content',
         ),
+        React.createElement(
+            'a',
+            {
+                href: 'https://example.com/inside-link',
+                ['data-testid']: 'inner-link',
+            },
+            'Inner link',
+        ),
+    )
+}
+
+vi.mock('~/features/search/ui/result-cards', () => ({
+    UniversalResultCard: MockUniversalResultCard,
 }))
 
 const contextValue = {
@@ -103,18 +132,15 @@ const source = JSON.stringify({
 
 describe('ObsidianResultCardBlock', () => {
     let root: Root | null = null
-    const windowOpenSpy = vi
-        .spyOn(window, 'open')
-        .mockImplementation(() => null)
 
     afterEach(() => {
         root?.unmount()
         root = null
         document.body.innerHTML = ''
-        windowOpenSpy.mockClear()
+        openExternalUrlWithAnchorMock.mockClear()
     })
 
-    it('opens the result when clicking a non-interactive area of the inline card', async () => {
+    it('expands on first click and opens on the second click', async () => {
         document.body.innerHTML = '<div id="root"></div>'
         const container = document.getElementById('root')
         if (container == null) {
@@ -152,10 +178,13 @@ describe('ObsidianResultCardBlock', () => {
         plainArea.dispatchEvent(new MouseEvent('click', { bubbles: true }))
         await Promise.resolve()
 
-        expect(windowOpenSpy).toHaveBeenCalledWith(
+        expect(openExternalUrlWithAnchorMock).not.toHaveBeenCalled()
+
+        plainArea.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+        await Promise.resolve()
+
+        expect(openExternalUrlWithAnchorMock).toHaveBeenCalledWith(
             'https://example.com/article',
-            '_blank',
-            'noopener,noreferrer',
         )
     })
 
@@ -197,6 +226,132 @@ describe('ObsidianResultCardBlock', () => {
         innerLink.dispatchEvent(new MouseEvent('click', { bubbles: true }))
         await Promise.resolve()
 
-        expect(windowOpenSpy).not.toHaveBeenCalled()
+        expect(openExternalUrlWithAnchorMock).not.toHaveBeenCalled()
+    })
+
+    it('opens notes on shift-click after expansion', async () => {
+        document.body.innerHTML = '<div id="root"></div>'
+        const container = document.getElementById('root')
+        if (container == null) {
+            throw new Error('Missing root container')
+        }
+
+        const onOpenNotes = vi.fn().mockResolvedValue(undefined)
+        root = createRoot(container)
+
+        flushSync(() => {
+            root?.render(
+                React.createElement(
+                    ThemeProvider,
+                    null,
+                    React.createElement(
+                        ExtUIContext.Provider,
+                        { value: contextValue },
+                        React.createElement(ObsidianResultCardBlock, {
+                            runtime: {} as never,
+                            source,
+                            onOpenExternalUrl: vi.fn(),
+                            onOpenNotes,
+                        }),
+                    ),
+                ),
+            )
+        })
+
+        const plainArea = document.querySelector(
+            '[data-testid="plain-area"]',
+        ) as HTMLElement | null
+        if (plainArea == null) {
+            throw new Error('Missing plain card area')
+        }
+
+        plainArea.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+        await Promise.resolve()
+
+        plainArea.dispatchEvent(
+            new MouseEvent('click', {
+                bubbles: true,
+                shiftKey: true,
+            }),
+        )
+        await Promise.resolve()
+
+        expect(onOpenNotes).toHaveBeenCalledWith({
+            contentEntityId: 'page-1',
+            title: 'Example article',
+        })
+        expect(openExternalUrlWithAnchorMock).not.toHaveBeenCalled()
+    })
+
+    it('adds nested loaded content entities to the scoped cache', async () => {
+        document.body.innerHTML = '<div id="root"></div>'
+        const container = document.getElementById('root')
+        if (container == null) {
+            throw new Error('Missing root container')
+        }
+
+        root = createRoot(container)
+
+        const nestedTargetSource = JSON.stringify({
+            v: 1,
+            kind: 'memex-result-card',
+            entity: {
+                id: 'annotation-1',
+                type: 'annotation',
+                text: 'Annotation',
+                content: { type: 'doc', content: [] },
+                created_at: 1,
+                updated_at: 1,
+                tag_ids: [],
+            },
+            relatedContentEntities: [
+                {
+                    id: 'selector-1',
+                    type: 'selector',
+                    selector_type: 'text_selector',
+                    quote: 'Quote',
+                    target_id: 'target-page-1',
+                    created_at: 1,
+                    updated_at: 1,
+                    target_entity: {
+                        id: 'target-page-1',
+                        type: 'web',
+                        title: 'Target page',
+                        url: 'https://example.com/target',
+                        normalized_url: 'example.com/target',
+                        created_at: 1,
+                        updated_at: 1,
+                    },
+                },
+            ],
+        })
+
+        flushSync(() => {
+            root?.render(
+                React.createElement(
+                    ThemeProvider,
+                    null,
+                    React.createElement(
+                        ExtUIContext.Provider,
+                        { value: contextValue },
+                        React.createElement(ObsidianResultCardBlock, {
+                            runtime: {} as never,
+                            source: nestedTargetSource,
+                            onOpenExternalUrl: vi.fn(),
+                            onOpenNotes: vi.fn(),
+                        }),
+                    ),
+                ),
+            )
+        })
+
+        const inlineCard = document.querySelector(
+            '[data-testid="inline-card"]',
+        ) as HTMLElement | null
+        if (inlineCard == null) {
+            throw new Error('Missing inline card')
+        }
+
+        expect(inlineCard.dataset.hasCachedTargetPage).toBe('true')
     })
 })

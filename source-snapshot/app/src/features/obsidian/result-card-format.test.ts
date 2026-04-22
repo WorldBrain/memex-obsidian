@@ -203,4 +203,185 @@ describe('result-card-format', () => {
             'https://x.com/memexuser/status/tweet-1',
         )
     })
+
+    it('drops duplicated host metadata from annotation selectors that point at the root page', () => {
+        const selectorEntity = {
+            id: 'selector-1',
+            type: 'selector',
+            selector_type: 'text_selector',
+            quote: 'Important line',
+            target_id: 'page-1',
+            created_at: 1,
+            updated_at: 1,
+            target_entity: {
+                id: 'page-1',
+                type: 'web',
+                title: 'Root page',
+                url: 'https://memex.garden/root',
+                normalized_url: 'https://memex.garden/root',
+                created_at: 1,
+                updated_at: 1,
+                full_text: 'Root page body that should not repeat',
+            },
+        } as SearchResultEntity
+        const annotationEntity = {
+            id: 'annotation-2',
+            type: 'annotation',
+            text: 'Annotation text',
+            content: {
+                type: 'doc',
+                content: [
+                    {
+                        type: 'paragraph',
+                        content: [
+                            {
+                                type: 'memex-reference',
+                                attrs: { contentId: selectorEntity.id },
+                            },
+                        ],
+                    },
+                ],
+            },
+            created_at: 1,
+            updated_at: 1,
+            tag_ids: [],
+        } as SearchResultEntity
+        const pageEntity = {
+            id: 'page-1',
+            type: 'web',
+            title: 'Root page',
+            url: 'https://memex.garden/root',
+            normalized_url: 'https://memex.garden/root',
+            created_at: 1,
+            updated_at: 1,
+            full_text: 'Root page body that should not repeat',
+        } as SearchResultEntity
+
+        const transferData = buildObsidianResultCardTransferData({
+            entity: annotationEntity,
+            contentEntitiesById: {
+                [annotationEntity.id]: annotationEntity,
+                [pageEntity.id]: pageEntity,
+                [selectorEntity.id]: selectorEntity,
+            },
+            referencesByContentEntityId: {
+                [annotationEntity.id]: {
+                    contentEntityIds: [pageEntity.id, selectorEntity.id],
+                    tagIds: [],
+                },
+            },
+            tagEntitiesById: {},
+        })
+
+        const serializedSelector =
+            transferData.payload.relatedContentEntities?.[1]
+        expect(serializedSelector).toMatchObject({
+            id: selectorEntity.id,
+            type: 'selector',
+            target_id: pageEntity.id,
+        })
+        expect(serializedSelector).not.toHaveProperty('target_entity')
+    })
+
+    it('keeps only title and url on selector root entities when they point elsewhere', () => {
+        const selectorEntity = {
+            id: 'selector-2',
+            type: 'selector',
+            selector_type: 'text_selector',
+            quote: 'Cross-page line',
+            target_id: 'page-2',
+            created_at: 1,
+            updated_at: 1,
+            target_entity: {
+                id: 'page-2',
+                type: 'web',
+                title: 'Referenced page',
+                url: 'https://memex.garden/referenced',
+                normalized_url: 'https://memex.garden/referenced',
+                created_at: 1,
+                updated_at: 1,
+                full_text: 'Referenced page body that should not be exported',
+            },
+        } as SearchResultEntity
+        const annotationEntity = {
+            id: 'annotation-3',
+            type: 'annotation',
+            text: 'Cross-page annotation',
+            content: {
+                type: 'doc',
+                content: [
+                    {
+                        type: 'paragraph',
+                        content: [
+                            {
+                                type: 'memex-reference',
+                                attrs: { contentId: selectorEntity.id },
+                            },
+                        ],
+                    },
+                ],
+            },
+            created_at: 1,
+            updated_at: 1,
+            tag_ids: [],
+        } as SearchResultEntity
+        const rootPageEntity = {
+            id: 'page-1',
+            type: 'web',
+            title: 'Root page',
+            url: 'https://memex.garden/root',
+            normalized_url: 'https://memex.garden/root',
+            created_at: 1,
+            updated_at: 1,
+            full_text: 'Root page body',
+        } as SearchResultEntity
+        const referencedPageEntity = {
+            id: 'page-2',
+            type: 'web',
+            title: 'Referenced page',
+            url: 'https://memex.garden/referenced',
+            normalized_url: 'https://memex.garden/referenced',
+            created_at: 1,
+            updated_at: 1,
+            full_text: 'Referenced page body that should not be exported',
+        } as SearchResultEntity
+
+        const transferData = buildObsidianResultCardTransferData({
+            entity: annotationEntity,
+            contentEntitiesById: {
+                [annotationEntity.id]: annotationEntity,
+                [rootPageEntity.id]: rootPageEntity,
+                [referencedPageEntity.id]: referencedPageEntity,
+                [selectorEntity.id]: selectorEntity,
+            },
+            referencesByContentEntityId: {
+                [annotationEntity.id]: {
+                    contentEntityIds: [
+                        rootPageEntity.id,
+                        referencedPageEntity.id,
+                        selectorEntity.id,
+                    ],
+                    tagIds: [],
+                },
+            },
+            tagEntitiesById: {},
+        })
+
+        const serializedSelector =
+            transferData.payload.relatedContentEntities?.[2]
+        expect(serializedSelector).toMatchObject({
+            id: selectorEntity.id,
+            type: 'selector',
+            target_entity: {
+                id: referencedPageEntity.id,
+                type: 'web',
+                title: 'Referenced page',
+                url: 'https://memex.garden/referenced',
+            },
+        })
+        expect(serializedSelector).not.toHaveProperty('target_entity.full_text')
+        expect(serializedSelector).not.toHaveProperty(
+            'target_entity.normalized_url',
+        )
+    })
 })

@@ -25,6 +25,24 @@ export function isSupportedExternalUrl(url: string): boolean {
     }
 }
 
+export function openExternalUrlWithAnchor(url: string): boolean {
+    if (!isSupportedExternalUrl(url)) {
+        return false
+    }
+
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.target = '_blank'
+    anchor.rel = 'noopener noreferrer'
+    anchor.style.display = 'none'
+
+    document.body.appendChild(anchor)
+    anchor.click()
+    anchor.remove()
+
+    return true
+}
+
 export function openExternalUrlInObsidianHost(url: string): boolean {
     if (!isSupportedExternalUrl(url)) {
         return false
@@ -43,5 +61,5 @@ export function openExternalUrlInObsidianHost(url: string): boolean {
         }
     }
 
-    return window.open(url, '_blank', 'noopener,noreferrer') != null
+    return openExternalUrlWithAnchor(url)
 }

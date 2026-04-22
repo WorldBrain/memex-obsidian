@@ -2,13 +2,16 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
     isSupportedExternalUrl,
     openExternalUrlInObsidianHost,
+    openExternalUrlWithAnchor,
 } from './external-url'
 
 describe('openExternalUrlInObsidianHost', () => {
     const originalRequire = (
         globalThis as typeof globalThis & { require?: unknown }
     ).require
-    const openSpy = vi.spyOn(window, 'open')
+    const anchorClickSpy = vi
+        .spyOn(HTMLAnchorElement.prototype, 'click')
+        .mockImplementation(() => {})
 
     afterEach(() => {
         if (originalRequire === undefined) {
@@ -21,14 +24,14 @@ describe('openExternalUrlInObsidianHost', () => {
             })
         }
 
-        openSpy.mockReset()
+        anchorClickSpy.mockClear()
     })
 
     it('rejects non-http urls', () => {
         expect(openExternalUrlInObsidianHost('obsidian://memex-auth')).toBe(
             false,
         )
-        expect(openSpy).not.toHaveBeenCalled()
+        expect(anchorClickSpy).not.toHaveBeenCalled()
     })
 
     it('uses Electron shell.openExternal when available', () => {
@@ -46,10 +49,10 @@ describe('openExternalUrlInObsidianHost', () => {
         expect(openExternalUrlInObsidianHost('https://memex.garden')).toBe(true)
 
         expect(openExternal).toHaveBeenCalledWith('https://memex.garden')
-        expect(openSpy).not.toHaveBeenCalled()
+        expect(anchorClickSpy).not.toHaveBeenCalled()
     })
 
-    it('falls back to window.open when Electron APIs are unavailable', () => {
+    it('falls back to an anchor click when Electron APIs are unavailable', () => {
         Object.defineProperty(globalThis, 'require', {
             value: vi.fn(() => {
                 throw new Error('electron unavailable')
@@ -57,15 +60,32 @@ describe('openExternalUrlInObsidianHost', () => {
             configurable: true,
             writable: true,
         })
-        openSpy.mockReturnValue(window)
 
         expect(openExternalUrlInObsidianHost('https://memex.garden')).toBe(true)
 
-        expect(openSpy).toHaveBeenCalledWith(
-            'https://memex.garden',
-            '_blank',
-            'noopener,noreferrer',
-        )
+        expect(anchorClickSpy).toHaveBeenCalledTimes(1)
+    })
+})
+
+describe('openExternalUrlWithAnchor', () => {
+    const anchorClickSpy = vi
+        .spyOn(HTMLAnchorElement.prototype, 'click')
+        .mockImplementation(() => {})
+
+    afterEach(() => {
+        document.body.innerHTML = ''
+        anchorClickSpy.mockClear()
+    })
+
+    it('creates and clicks a temporary anchor for supported urls', () => {
+        expect(openExternalUrlWithAnchor('https://memex.garden')).toBe(true)
+        expect(anchorClickSpy).toHaveBeenCalledTimes(1)
+        expect(document.querySelector('a')).toBeNull()
+    })
+
+    it('rejects unsupported urls', () => {
+        expect(openExternalUrlWithAnchor('obsidian://vault')).toBe(false)
+        expect(anchorClickSpy).not.toHaveBeenCalled()
     })
 })
 

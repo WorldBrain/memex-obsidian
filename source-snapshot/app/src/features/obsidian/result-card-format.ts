@@ -1,7 +1,13 @@
 import type {
+    AnnotationEntity,
     ContentEntity,
+    SelectorEntity,
     TagEntity,
 } from '@memex/common/features/page-interactions/types'
+import {
+    findAnnotationTargetReferenceId,
+    getAnnotationReferenceContentIds,
+} from '@memex/common/features/annotations/util/reference-content-ids'
 import { getContentEntityUrl } from '@memex/common/features/page-interactions/utils'
 import { getPublicImageUrl } from '@memex/common/utils/image-url'
 import type { SearchResultEntity } from '~/features/search/ui/search-container/logic'
@@ -72,6 +78,150 @@ function withResolvedEntityUrl<T extends ContentEntity>(
         ...entity,
         url: normalizedUrl,
     } as T
+}
+
+function getOptionalEntityTitle(entity: ContentEntity): string | null {
+    return 'title' in entity ? trimNonEmptyString(entity.title) : null
+}
+
+function resolveResultCardReferenceRootEntity(params: {
+    entity: ContentEntity
+    contentEntitiesById: Record<string, ContentEntity>
+    referencesByContentEntityId?: Record<
+        string,
+        MemexResultCardReferences | undefined
+    >
+    visitedIds?: Set<string>
+}): ContentEntity | null {
+    const visitedIds = params.visitedIds ?? new Set<string>()
+    if (visitedIds.has(params.entity.id)) {
+        return null
+    }
+    visitedIds.add(params.entity.id)
+
+    if (params.entity.type === 'selector') {
+        const selectorEntity = params.entity as SelectorEntity
+        const targetEntity =
+            selectorEntity.target_entity ??
+            params.contentEntitiesById[selectorEntity.target_id]
+
+        if (!targetEntity) {
+            return null
+        }
+
+        return (
+            resolveResultCardReferenceRootEntity({
+                ...params,
+                entity: targetEntity,
+                visitedIds,
+            }) ?? targetEntity
+        )
+    }
+
+    if (params.entity.type === 'annotation') {
+        const annotationEntity = params.entity as AnnotationEntity
+        const referenceContentIds = getAnnotationReferenceContentIds({
+            annotationContent: annotationEntity.content,
+            relatedContentIds:
+                params.referencesByContentEntityId?.[annotationEntity.id]
+                    ?.contentEntityIds,
+        })
+        const rootReferenceId =
+            findAnnotationTargetReferenceId({
+                annotationContent: annotationEntity.content,
+                referenceContentIds,
+            }) ?? referenceContentIds[0]
+
+        if (!rootReferenceId) {
+            return null
+        }
+
+        const rootReferenceEntity = params.contentEntitiesById[rootReferenceId]
+        if (!rootReferenceEntity) {
+            return null
+        }
+
+        return (
+            resolveResultCardReferenceRootEntity({
+                ...params,
+                entity: rootReferenceEntity,
+                visitedIds,
+            }) ?? rootReferenceEntity
+        )
+    }
+
+    return params.entity
+}
+
+function buildMinimalReferenceRootEntity(params: {
+    entity: ContentEntity
+    resolvedUrl?: string | null
+}): ContentEntity {
+    const title = getOptionalEntityTitle(params.entity)
+    const resolvedUrl =
+        trimNonEmptyString(params.resolvedUrl) ??
+        trimNonEmptyString(params.entity.url)
+
+    return {
+        id: params.entity.id,
+        type: params.entity.type,
+        ...(title ? { title } : {}),
+        ...(resolvedUrl ? { url: resolvedUrl } : {}),
+    } as ContentEntity
+}
+
+function sanitizeRelatedContentEntityForPayload(params: {
+    relatedEntity: ContentEntity
+    rootReferenceEntity: ContentEntity | null
+    contentEntitiesById: Record<string, ContentEntity>
+    referencesByContentEntityId?: Record<
+        string,
+        MemexResultCardReferences | undefined
+    >
+    userId?: string
+}): ContentEntity {
+    const relatedEntityWithResolvedUrl = withResolvedEntityUrl(
+        params.relatedEntity,
+        resolveMemexResultCardEntityUrl({
+            entity: params.relatedEntity,
+            userId: params.userId,
+            contentEntitiesById: params.contentEntitiesById,
+            referencesByContentEntityId: params.referencesByContentEntityId,
+        }),
+    )
+
+    if (relatedEntityWithResolvedUrl.type !== 'selector') {
+        return relatedEntityWithResolvedUrl
+    }
+
+    const selectorEntity = {
+        ...(relatedEntityWithResolvedUrl as SelectorEntity),
+    }
+    const selectorRootEntity = resolveResultCardReferenceRootEntity({
+        entity: selectorEntity,
+        contentEntitiesById: params.contentEntitiesById,
+        referencesByContentEntityId: params.referencesByContentEntityId,
+    })
+
+    if (
+        !selectorRootEntity ||
+        selectorRootEntity.id === params.rootReferenceEntity?.id
+    ) {
+        delete selectorEntity.target_entity
+        return selectorEntity
+    }
+
+    selectorEntity.target_entity = buildMinimalReferenceRootEntity({
+        entity: selectorRootEntity,
+        resolvedUrl: resolveMemexResultCardEntityUrl({
+            entity: selectorRootEntity,
+            userId: params.userId,
+            contentEntitiesById: params.contentEntitiesById,
+            referencesByContentEntityId: params.referencesByContentEntityId,
+        }),
+    })
+
+    return selectorEntity
 }
 
 export function buildMemexResultCardPayload(params: {
@@ -153,6 +303,11 @@ export function buildObsidianResultCardTransferData(params: {
     const relatedContentIds =
         params.referencesByContentEntityId?.[params.entity.id]
             ?.contentEntityIds ?? []
+    const rootReferenceEntity = resolveResultCardReferenceRootEntity({
+        entity: params.entity,
+        contentEntitiesById: params.contentEntitiesById,
+        referencesByContentEntityId: params.referencesByContentEntityId,
+    })
     const relatedContentEntities = relatedContentIds
         .map((contentId) => params.contentEntitiesById[contentId])
         .filter(
@@ -160,16 +315,13 @@ export function buildObsidianResultCardTransferData(params: {
                 relatedEntity != null,
         )
         .map((relatedEntity) =>
-            withResolvedEntityUrl(
+            sanitizeRelatedContentEntityForPayload({
                 relatedEntity,
-                resolveMemexResultCardEntityUrl({
-                    entity: relatedEntity,
-                    userId: params.userId,
-                    contentEntitiesById: params.contentEntitiesById,
-                    referencesByContentEntityId:
-                        params.referencesByContentEntityId,
-                }),
-            ),
+                rootReferenceEntity,
+                userId: params.userId,
+                contentEntitiesById: params.contentEntitiesById,
+                referencesByContentEntityId: params.referencesByContentEntityId,
+            }),
         )
     const payload = buildMemexResultCardPayload({
         entity: params.entity,
