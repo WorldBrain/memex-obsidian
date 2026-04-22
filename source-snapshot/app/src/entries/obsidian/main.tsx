@@ -15,6 +15,7 @@ import {
 import { ObsidianResultCardBlock } from './result-card-block'
 import { ObsidianRuntime } from './runtime'
 import { ObsidianSidebarSessionCache } from './sidebar-session-cache'
+import { ObsidianAuthSessionPersistence } from './auth-session-persistence'
 import { MEMEX_OBSIDIAN_VIEW_TYPE, MemexSidebarView } from './view'
 import {
     formatDroppedMemexResultCardCodeBlock,
@@ -22,6 +23,7 @@ import {
     MEMEX_RESULT_CARD_CODE_BLOCK_LANGUAGE,
     MEMEX_RESULT_CARD_DRAG_MIME_TYPE,
 } from '~/features/obsidian/result-card-format'
+import { getSupabaseClient } from '~/setup/supabase'
 
 const OAUTH_PROTOCOL_ACTION = 'memex-auth'
 const OAUTH_LOGIN_PROVIDER = 'google'
@@ -171,6 +173,8 @@ export default class MemexObsidianPlugin extends Plugin {
         runtime: this.runtime,
         startLoginFlow: () => this.startLoginFlow(),
     })
+    private authSessionPersistence: ObsidianAuthSessionPersistence | null = null
+    private stopAuthSessionSync: (() => void) | null = null
 
     private resolveRuntimeUrl(path: string): string | null {
         const adapter = this.app.vault?.adapter
@@ -187,6 +191,10 @@ export default class MemexObsidianPlugin extends Plugin {
 
     async onload(): Promise<void> {
         await this.loadSettings()
+        const authSessionPersistence = this.getAuthSessionPersistence()
+        await authSessionPersistence.restoreSession()
+        this.stopAuthSessionSync = authSessionPersistence.startSync()
+        await authSessionPersistence.syncCurrentSession()
 
         this.registerView(
             MEMEX_OBSIDIAN_VIEW_TYPE,
@@ -250,6 +258,8 @@ export default class MemexObsidianPlugin extends Plugin {
     }
 
     async onunload(): Promise<void> {
+        this.stopAuthSessionSync?.()
+        this.stopAuthSessionSync = null
         this.sidebarSessionCache.dispose()
         await this.runtime.dispose()
         this.app.workspace
@@ -367,6 +377,7 @@ export default class MemexObsidianPlugin extends Plugin {
                 callbackUrl,
                 OAUTH_LOGIN_PROVIDER,
             )
+            await this.getAuthSessionPersistence().syncCurrentSession()
             try {
                 this.app.secretStorage.setSecret(
                     this.settings.callbackSecretId,
@@ -515,5 +526,19 @@ export default class MemexObsidianPlugin extends Plugin {
         contentId: string,
     ): Promise<string> {
         return `[[memex:${contentId}]]`
+    }
+
+    private getAuthSessionPersistence(): ObsidianAuthSessionPersistence {
+        if (this.authSessionPersistence == null) {
+            this.authSessionPersistence = new ObsidianAuthSessionPersistence({
+                secretStorage: this.app.secretStorage,
+                auth: getSupabaseClient().auth,
+                onWarning: (message, error) => {
+                    console.warn(`[Memex Obsidian] ${message}`, error)
+                },
+            })
+        }
+
+        return this.authSessionPersistence
     }
 }

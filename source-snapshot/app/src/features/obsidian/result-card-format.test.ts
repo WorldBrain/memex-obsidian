@@ -30,6 +30,37 @@ describe('result-card-format', () => {
         ).toEqual(payload)
     })
 
+    it('omits search chunk metadata from the serialized entity', () => {
+        const payload = buildMemexResultCardPayload({
+            entity: {
+                id: 'content-search-1',
+                type: 'web',
+                title: 'Search-shaped result',
+                url: 'https://memex.garden/search-shaped',
+                normalized_url: 'https://memex.garden/search-shaped',
+                created_at: 1,
+                updated_at: 1,
+                searchChunkMatches: [
+                    {
+                        matchedSourceContentId: 'chunk-1',
+                        chunks: [
+                            {
+                                id: 'chunk-1',
+                                index: 0,
+                                type: 'selector',
+                                text: 'Matched chunk',
+                                metadata: {},
+                            },
+                        ],
+                    },
+                ],
+            },
+        })
+
+        expect(payload.entity.searchChunkMatches).toBeUndefined()
+        expect(payload.entity.id).toBe('content-search-1')
+    })
+
     it('serializes the payload as a fenced memex-card block', () => {
         const payload = buildMemexResultCardPayload({
             entity: {

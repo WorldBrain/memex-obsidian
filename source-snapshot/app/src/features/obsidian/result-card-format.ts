@@ -29,6 +29,18 @@ export interface MemexResultCardPayload {
     relatedContentEntities?: ContentEntity[]
 }
 
+function stripSearchMetadataFromEntity(
+    entity: SearchResultEntity,
+): SearchResultEntity {
+    const {
+        searchChunkContext: _searchChunkContext,
+        searchChunkMatches: _searchChunkMatches,
+        ...originalEntity
+    } = entity
+
+    return originalEntity
+}
+
 export function buildMemexResultCardPayload(params: {
     entity: SearchResultEntity
     snippets?: MemexResultCardSnippet[]
@@ -38,7 +50,9 @@ export function buildMemexResultCardPayload(params: {
     return {
         v: 1,
         kind: 'memex-result-card',
-        entity: params.entity,
+        // Obsidian drops should render the saved card, not the transient
+        // chunk-match state attached by search responses.
+        entity: stripSearchMetadataFromEntity(params.entity),
         snippets: params.snippets?.length ? params.snippets : undefined,
         tagEntities: params.tagEntities?.length
             ? params.tagEntities
