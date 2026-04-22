@@ -24,14 +24,14 @@ describe('openExternalUrlInObsidianHost', () => {
         openSpy.mockReset()
     })
 
-    it('rejects non-http urls', async () => {
-        await expect(
-            openExternalUrlInObsidianHost('obsidian://memex-auth'),
-        ).resolves.toBe(false)
+    it('rejects non-http urls', () => {
+        expect(openExternalUrlInObsidianHost('obsidian://memex-auth')).toBe(
+            false,
+        )
         expect(openSpy).not.toHaveBeenCalled()
     })
 
-    it('uses Electron shell.openExternal when available', async () => {
+    it('uses Electron shell.openExternal when available', () => {
         const openExternal = vi.fn().mockResolvedValue(undefined)
         Object.defineProperty(globalThis, 'require', {
             value: vi.fn().mockReturnValue({
@@ -43,15 +43,13 @@ describe('openExternalUrlInObsidianHost', () => {
             writable: true,
         })
 
-        await expect(
-            openExternalUrlInObsidianHost('https://memex.garden'),
-        ).resolves.toBe(true)
+        expect(openExternalUrlInObsidianHost('https://memex.garden')).toBe(true)
 
         expect(openExternal).toHaveBeenCalledWith('https://memex.garden')
         expect(openSpy).not.toHaveBeenCalled()
     })
 
-    it('falls back to window.open when Electron APIs are unavailable', async () => {
+    it('falls back to window.open when Electron APIs are unavailable', () => {
         Object.defineProperty(globalThis, 'require', {
             value: vi.fn(() => {
                 throw new Error('electron unavailable')
@@ -61,9 +59,7 @@ describe('openExternalUrlInObsidianHost', () => {
         })
         openSpy.mockReturnValue(window)
 
-        await expect(
-            openExternalUrlInObsidianHost('https://memex.garden'),
-        ).resolves.toBe(true)
+        expect(openExternalUrlInObsidianHost('https://memex.garden')).toBe(true)
 
         expect(openSpy).toHaveBeenCalledWith(
             'https://memex.garden',

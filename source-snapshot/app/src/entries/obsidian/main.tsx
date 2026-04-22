@@ -412,8 +412,12 @@ export default class MemexObsidianPlugin extends Plugin {
         await this.completeOAuthFromCallbackUrl(callbackUrl)
     }
 
-    async openExternalUrl(url: string): Promise<void> {
-        const didOpen = await openExternalUrlInObsidianHost(url)
+    openExternalUrl(url: string): void {
+        const workspaceOpenUrl = this.app.workspace.openUrl
+        const didOpen =
+            workspaceOpenUrl != null
+                ? (workspaceOpenUrl.call(this.app.workspace, url), true)
+                : openExternalUrlInObsidianHost(url)
         if (!didOpen) {
             new Notice('Could not open external URL.')
         }

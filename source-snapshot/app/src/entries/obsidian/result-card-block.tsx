@@ -109,6 +109,14 @@ const getEntityTitle = (entity: ContentEntity): string => {
     return entity.id
 }
 
+const isInteractiveInlineCardTarget = (target: EventTarget | null): boolean => {
+    if (!(target instanceof HTMLElement)) {
+        return false
+    }
+
+    return target.closest('a[href]') != null
+}
+
 const RenderedResultCard: React.FC<{
     entity: ContentEntity
     snippets?: Array<string | { text: string; offset: number }>
@@ -174,8 +182,8 @@ const RenderedResultCard: React.FC<{
             return
         }
 
-        void onOpenExternalUrl(url)
-    }, [onOpenExternalUrl, url])
+        window.open(url, '_blank', 'noopener,noreferrer')
+    }, [url])
 
     const handleOpenNotes = React.useCallback(async () => {
         await onOpenNotes({
@@ -196,9 +204,23 @@ const RenderedResultCard: React.FC<{
         [handleOpen, handleOpenNotes],
     )
 
+    const handleWrapperClickCapture = React.useCallback(
+        (event: React.MouseEvent<HTMLDivElement>) => {
+            if (isInteractiveInlineCardTarget(event.target)) {
+                return
+            }
+
+            event.preventDefault()
+            event.stopPropagation()
+            handleCardClick(event)
+        },
+        [handleCardClick],
+    )
+
     return (
         <div
             className="memex-obsidian-result-card-block memex-obsidian-result-card-block-clickable"
+            onClickCapture={handleWrapperClickCapture}
             title={
                 url
                     ? 'Click to open original document. Shift+click to open notes in Memex sidebar.'
@@ -209,6 +231,7 @@ const RenderedResultCard: React.FC<{
                 entity={entity}
                 snippets={snippets}
                 disableActions
+                disableClickToExpand
                 onOpenExternalUrl={onOpenExternalUrl}
                 onClick={handleCardClick}
             />

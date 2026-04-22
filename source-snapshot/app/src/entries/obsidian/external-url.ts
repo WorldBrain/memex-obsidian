@@ -25,9 +25,7 @@ export function isSupportedExternalUrl(url: string): boolean {
     }
 }
 
-export async function openExternalUrlInObsidianHost(
-    url: string,
-): Promise<boolean> {
+export function openExternalUrlInObsidianHost(url: string): boolean {
     if (!isSupportedExternalUrl(url)) {
         return false
     }
@@ -37,7 +35,7 @@ export async function openExternalUrlInObsidianHost(
         try {
             const electron = electronRequire('electron') as ElectronShellModule
             if (electron.shell?.openExternal != null) {
-                await electron.shell.openExternal(url)
+                void electron.shell.openExternal(url)
                 return true
             }
         } catch {
