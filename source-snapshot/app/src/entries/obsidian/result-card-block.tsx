@@ -112,11 +112,12 @@ const getEntityTitle = (entity: ContentEntity): string => {
 const RenderedResultCard: React.FC<{
     entity: ContentEntity
     snippets?: Array<string | { text: string; offset: number }>
+    onOpenExternalUrl: (url: string) => Promise<void> | void
     onOpenNotes: (params: {
         contentEntityId: string
         title: string
     }) => Promise<void>
-}> = ({ entity, snippets, onOpenNotes }) => {
+}> = ({ entity, snippets, onOpenExternalUrl, onOpenNotes }) => {
     const context = useUIContext()
     const url = React.useMemo(
         () =>
@@ -173,8 +174,8 @@ const RenderedResultCard: React.FC<{
             return
         }
 
-        window.open(url, '_blank', 'noopener,noreferrer')
-    }, [url])
+        void onOpenExternalUrl(url)
+    }, [onOpenExternalUrl, url])
 
     const handleOpenNotes = React.useCallback(async () => {
         await onOpenNotes({
@@ -208,6 +209,7 @@ const RenderedResultCard: React.FC<{
                 entity={entity}
                 snippets={snippets}
                 disableActions
+                onOpenExternalUrl={onOpenExternalUrl}
                 onClick={handleCardClick}
             />
         </div>
@@ -217,11 +219,12 @@ const RenderedResultCard: React.FC<{
 export const ObsidianResultCardBlock: React.FC<{
     runtime: ObsidianRuntime
     source: string
+    onOpenExternalUrl: (url: string) => Promise<void> | void
     onOpenNotes: (params: {
         contentEntityId: string
         title: string
     }) => Promise<void>
-}> = ({ runtime, source, onOpenNotes }) => {
+}> = ({ runtime, source, onOpenExternalUrl, onOpenNotes }) => {
     const payload = React.useMemo(
         () => parseMemexResultCardPayload(source),
         [source],
@@ -245,6 +248,7 @@ export const ObsidianResultCardBlock: React.FC<{
                 <RenderedResultCard
                     entity={payload.entity}
                     snippets={payload.snippets}
+                    onOpenExternalUrl={onOpenExternalUrl}
                     onOpenNotes={onOpenNotes}
                 />
             </PayloadScopedContext>

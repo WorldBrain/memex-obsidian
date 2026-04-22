@@ -1,6 +1,7 @@
 import React from 'react'
 import type { ObsidianRuntime } from './runtime'
 import { ObsidianSidebarBridgeController } from './sidebar-bridge-controller'
+import { openExternalUrlInObsidianHost } from './external-url'
 import {
     OBSIDIAN_SIDEBAR_BRIDGE_VERSION,
     getObsidianSidebarEmbedUrl,
@@ -161,23 +162,7 @@ export const ObsidianSidebarSurface: React.FC<ObsidianSidebarSurfaceProps> = ({
                 void startLoginFlow()
             },
             onOpenExternalUrl: (url) => {
-                const parsedUrl = (() => {
-                    try {
-                        return new URL(url)
-                    } catch {
-                        return null
-                    }
-                })()
-
-                if (
-                    parsedUrl == null ||
-                    (parsedUrl.protocol !== 'https:' &&
-                        parsedUrl.protocol !== 'http:')
-                ) {
-                    return
-                }
-
-                window.open(url, '_blank', 'noopener,noreferrer')
+                void openExternalUrlInObsidianHost(url)
             },
             onNativeAction: (message) => {
                 console.warn(

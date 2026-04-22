@@ -17,6 +17,7 @@ import { ObsidianRuntime } from './runtime'
 import { ObsidianSidebarSessionCache } from './sidebar-session-cache'
 import { ObsidianAuthSessionPersistence } from './auth-session-persistence'
 import { MEMEX_OBSIDIAN_VIEW_TYPE, MemexSidebarView } from './view'
+import { openExternalUrlInObsidianHost } from './external-url'
 import {
     formatDroppedMemexResultCardCodeBlock,
     getEditorPositionAfterInsertedText,
@@ -100,6 +101,7 @@ class ResultCardRenderChild extends MarkdownRenderChild {
             <ObsidianResultCardBlock
                 runtime={this.runtime}
                 source={this.source}
+                onOpenExternalUrl={(url) => this.plugin.openExternalUrl(url)}
                 onOpenNotes={(params) =>
                     this.plugin.openSearchNotesInSidebar(params)
                 }
@@ -408,6 +410,13 @@ export default class MemexObsidianPlugin extends Plugin {
             return
         }
         await this.completeOAuthFromCallbackUrl(callbackUrl)
+    }
+
+    async openExternalUrl(url: string): Promise<void> {
+        const didOpen = await openExternalUrlInObsidianHost(url)
+        if (!didOpen) {
+            new Notice('Could not open external URL.')
+        }
     }
 
     private buildCallbackUrlFromProtocolParams(
