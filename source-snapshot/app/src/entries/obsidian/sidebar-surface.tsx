@@ -248,6 +248,7 @@ export const ObsidianSidebarSurface: React.FC<ObsidianSidebarSurfaceProps> = ({
                 className="memex-obsidian-sidebar-iframe"
                 src={embedUrl}
                 title="Memex Sidebar"
+                allow="clipboard-write"
                 onLoad={handleIframeLoad}
             />
         </div>

@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
+import type { SearchResultEntity } from '~/features/search/ui/search-container/logic'
 import {
+    buildObsidianResultCardTransferData,
     buildMemexResultCardPayload,
     formatDroppedMemexResultCardCodeBlock,
     getEditorPositionAfterInsertedText,
@@ -113,5 +115,92 @@ describe('result-card-format', () => {
 
     it('rejects non-card payloads', () => {
         expect(parseMemexResultCardPayload('{"v":1}')).toBeNull()
+    })
+
+    it('builds shared Obsidian transfer data with runtime-resolved URLs', () => {
+        const annotationEntity = {
+            id: 'annotation-1',
+            type: 'annotation',
+            text: 'Linked note',
+            content: {
+                type: 'doc',
+                content: [
+                    {
+                        type: 'paragraph',
+                        content: [
+                            {
+                                type: 'text',
+                                text: 'Linked note',
+                            },
+                        ],
+                    },
+                ],
+            },
+            created_at: 1,
+            updated_at: 1,
+            tag_ids: [],
+        } as SearchResultEntity
+        const pageEntity = {
+            id: 'page-1',
+            type: 'web',
+            title: 'Memex',
+            url: 'https://memex.garden',
+            normalized_url: 'https://memex.garden',
+            created_at: 1,
+            updated_at: 1,
+            tag_ids: [],
+        } as SearchResultEntity
+
+        const transferData = buildObsidianResultCardTransferData({
+            entity: annotationEntity,
+            contentEntitiesById: {
+                [annotationEntity.id]: annotationEntity,
+                [pageEntity.id]: pageEntity,
+            },
+            referencesByContentEntityId: {
+                [annotationEntity.id]: {
+                    contentEntityIds: [pageEntity.id],
+                    tagIds: [],
+                },
+            },
+            tagEntitiesById: {},
+        })
+
+        expect(transferData.plainText).toBe('https://memex.garden')
+        expect(transferData.payload.relatedContentEntities).toEqual([
+            pageEntity,
+        ])
+        expect(transferData.codeBlock).toBe(
+            serializeMemexResultCardCodeBlock(transferData.payload),
+        )
+    })
+
+    it('stores runtime-constructed URLs on serialized entities when they are derivable', () => {
+        const tweetEntity = {
+            id: 'tweet-1',
+            type: 'twitter',
+            text: 'Memex tweet',
+            author_handle: 'memexuser',
+            author_name: 'Memex User',
+            media: [],
+            created_at: 1,
+            updated_at: 1,
+            tag_ids: [],
+        } as SearchResultEntity
+
+        const transferData = buildObsidianResultCardTransferData({
+            entity: tweetEntity,
+            contentEntitiesById: {
+                [tweetEntity.id]: tweetEntity,
+            },
+            tagEntitiesById: {},
+        })
+
+        expect(transferData.plainText).toBe(
+            'https://x.com/memexuser/status/tweet-1',
+        )
+        expect(transferData.payload.entity.url).toBe(
+            'https://x.com/memexuser/status/tweet-1',
+        )
     })
 })

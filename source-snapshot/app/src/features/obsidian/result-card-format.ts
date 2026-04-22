@@ -2,6 +2,8 @@ import type {
     ContentEntity,
     TagEntity,
 } from '@memex/common/features/page-interactions/types'
+import { getContentEntityUrl } from '@memex/common/features/page-interactions/utils'
+import { getPublicImageUrl } from '@memex/common/utils/image-url'
 import type { SearchResultEntity } from '~/features/search/ui/search-container/logic'
 
 export const MEMEX_RESULT_CARD_CODE_BLOCK_LANGUAGE = 'memex-card'
@@ -29,6 +31,22 @@ export interface MemexResultCardPayload {
     relatedContentEntities?: ContentEntity[]
 }
 
+export interface MemexResultCardReferences {
+    contentEntityIds: string[]
+    tagIds: string[]
+}
+
+export interface MemexResultCardTransferData {
+    payload: MemexResultCardPayload
+    codeBlock: string
+    plainText: string
+}
+
+function trimNonEmptyString(value: string | undefined | null): string | null {
+    const trimmed = value?.trim()
+    return trimmed?.length ? trimmed : null
+}
+
 function stripSearchMetadataFromEntity(
     entity: SearchResultEntity,
 ): SearchResultEntity {
@@ -41,18 +59,37 @@ function stripSearchMetadataFromEntity(
     return originalEntity
 }
 
+function withResolvedEntityUrl<T extends ContentEntity>(
+    entity: T,
+    resolvedUrl?: string | null,
+): T {
+    const normalizedUrl = trimNonEmptyString(resolvedUrl)
+    if (!normalizedUrl) {
+        return entity
+    }
+
+    return {
+        ...entity,
+        url: normalizedUrl,
+    } as T
+}
+
 export function buildMemexResultCardPayload(params: {
     entity: SearchResultEntity
     snippets?: MemexResultCardSnippet[]
     tagEntities?: TagEntity[]
     relatedContentEntities?: ContentEntity[]
+    resolvedEntityUrl?: string | null
 }): MemexResultCardPayload {
     return {
         v: 1,
         kind: 'memex-result-card',
         // Obsidian drops should render the saved card, not the transient
         // chunk-match state attached by search responses.
-        entity: stripSearchMetadataFromEntity(params.entity),
+        entity: withResolvedEntityUrl(
+            stripSearchMetadataFromEntity(params.entity),
+            params.resolvedEntityUrl,
+        ),
         snippets: params.snippets?.length ? params.snippets : undefined,
         tagEntities: params.tagEntities?.length
             ? params.tagEntities
@@ -77,6 +114,108 @@ export function serializeMemexResultCardCodeBlock(
         serializeMemexResultCardPayload(payload),
         '```',
     ].join('\n')
+}
+
+function resolveMemexResultCardEntityUrl(params: {
+    entity: ContentEntity
+    userId?: string
+    contentEntitiesById: Record<string, ContentEntity>
+    referencesByContentEntityId?: Record<
+        string,
+        MemexResultCardReferences | undefined
+    >
+}): string | null {
+    return (
+        getContentEntityUrl(params.entity, {
+            userId: params.userId,
+            getPublicImageUrl,
+            getParentEntity: (id) => params.contentEntitiesById[id],
+            getRelatedContentIds: (id) =>
+                params.referencesByContentEntityId?.[id]?.contentEntityIds,
+        }) ?? null
+    )
+}
+
+export function buildObsidianResultCardTransferData(params: {
+    entity: SearchResultEntity
+    snippets?: MemexResultCardSnippet[]
+    userId?: string
+    tagEntitiesById: Record<string, TagEntity>
+    contentEntitiesById: Record<string, ContentEntity>
+    referencesByContentEntityId?: Record<
+        string,
+        MemexResultCardReferences | undefined
+    >
+}): MemexResultCardTransferData {
+    const tagEntities = (params.entity.tag_ids ?? [])
+        .map((tagId) => params.tagEntitiesById[tagId])
+        .filter((tag): tag is TagEntity => tag != null)
+    const relatedContentIds =
+        params.referencesByContentEntityId?.[params.entity.id]
+            ?.contentEntityIds ?? []
+    const relatedContentEntities = relatedContentIds
+        .map((contentId) => params.contentEntitiesById[contentId])
+        .filter(
+            (relatedEntity): relatedEntity is ContentEntity =>
+                relatedEntity != null,
+        )
+        .map((relatedEntity) =>
+            withResolvedEntityUrl(
+                relatedEntity,
+                resolveMemexResultCardEntityUrl({
+                    entity: relatedEntity,
+                    userId: params.userId,
+                    contentEntitiesById: params.contentEntitiesById,
+                    referencesByContentEntityId:
+                        params.referencesByContentEntityId,
+                }),
+            ),
+        )
+    const payload = buildMemexResultCardPayload({
+        entity: params.entity,
+        snippets: params.snippets,
+        tagEntities,
+        relatedContentEntities,
+        resolvedEntityUrl: resolveMemexResultCardEntityUrl({
+            entity: params.entity,
+            userId: params.userId,
+            contentEntitiesById: params.contentEntitiesById,
+            referencesByContentEntityId: params.referencesByContentEntityId,
+        }),
+    })
+    const contentEntitiesById = {
+        ...Object.fromEntries(
+            relatedContentEntities.map((relatedEntity) => [
+                relatedEntity.id,
+                relatedEntity,
+            ]),
+        ),
+        [payload.entity.id]: payload.entity,
+    }
+    const plainText =
+        resolveMemexResultCardEntityUrl({
+            entity: payload.entity,
+            userId: params.userId,
+            contentEntitiesById,
+            referencesByContentEntityId: {
+                [payload.entity.id]: {
+                    contentEntityIds: relatedContentEntities.map(
+                        (relatedEntity) => relatedEntity.id,
+                    ),
+                    tagIds: [],
+                },
+            },
+        }) ??
+        ('title' in payload.entity
+            ? trimNonEmptyString(payload.entity.title)
+            : null) ??
+        payload.entity.id
+
+    return {
+        payload,
+        codeBlock: serializeMemexResultCardCodeBlock(payload),
+        plainText,
+    }
 }
 
 export function formatDroppedMemexResultCardCodeBlock(source: string): string {
