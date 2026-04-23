@@ -35,6 +35,9 @@ function MockUniversalResultCard({
 }) {
     const context = React.useContext(ExtUIContext)
     const [isExpanded, setIsExpanded] = React.useState(false)
+    const annotationReferenceIds =
+        context?.globalLogic.state.referencesByContentEntityId['annotation-1']
+            ?.contentEntityIds ?? []
 
     return React.createElement(
         'div',
@@ -45,6 +48,12 @@ function MockUniversalResultCard({
                 context?.globalState.contentEntities['target-page-1'] != null
                     ? 'true'
                     : 'false',
+            ['data-has-logic-cached-target-page']:
+                context?.globalLogic.state.contentEntities['target-page-1'] !=
+                null
+                    ? 'true'
+                    : 'false',
+            ['data-annotation-reference-ids']: annotationReferenceIds.join(','),
             ['data-result-card-shrinkable']: 'true',
             ['data-result-card-expanded']: isExpanded ? 'true' : 'false',
             onClick: (event: React.MouseEvent<HTMLDivElement>) => {
@@ -353,5 +362,93 @@ describe('ObsidianResultCardBlock', () => {
         }
 
         expect(inlineCard.dataset.hasCachedTargetPage).toBe('true')
+        expect(inlineCard.dataset.hasLogicCachedTargetPage).toBe('true')
+    })
+
+    it('adds dragged annotation reference rows to the scoped logic cache', async () => {
+        document.body.innerHTML = '<div id="root"></div>'
+        const container = document.getElementById('root')
+        if (container == null) {
+            throw new Error('Missing root container')
+        }
+
+        root = createRoot(container)
+
+        const annotationSource = JSON.stringify({
+            v: 1,
+            kind: 'memex-result-card',
+            entity: {
+                id: 'annotation-1',
+                type: 'annotation',
+                text: 'Annotation',
+                content: {
+                    type: 'doc',
+                    content: [
+                        {
+                            type: 'paragraph',
+                            content: [
+                                {
+                                    type: 'memex-reference',
+                                    attrs: {
+                                        contentId: 'selector-1',
+                                    },
+                                },
+                            ],
+                        },
+                    ],
+                },
+                created_at: 1,
+                updated_at: 1,
+                tag_ids: [],
+            },
+            relatedContentEntities: [
+                {
+                    id: 'selector-1',
+                    type: 'selector',
+                    selector_type: 'text_selector',
+                    quote: 'Quote',
+                    target_id: 'target-page-1',
+                    created_at: 1,
+                    updated_at: 1,
+                    target_entity: {
+                        id: 'target-page-1',
+                        type: 'web',
+                        title: 'Target page',
+                        url: 'https://example.com/target',
+                        normalized_url: 'example.com/target',
+                        created_at: 1,
+                        updated_at: 1,
+                    },
+                },
+            ],
+        })
+
+        flushSync(() => {
+            root?.render(
+                React.createElement(
+                    ThemeProvider,
+                    null,
+                    React.createElement(
+                        ExtUIContext.Provider,
+                        { value: contextValue },
+                        React.createElement(ObsidianResultCardBlock, {
+                            runtime: {} as never,
+                            source: annotationSource,
+                            onOpenExternalUrl: vi.fn(),
+                            onOpenNotes: vi.fn(),
+                        }),
+                    ),
+                ),
+            )
+        })
+
+        const inlineCard = document.querySelector(
+            '[data-testid="inline-card"]',
+        ) as HTMLElement | null
+        if (inlineCard == null) {
+            throw new Error('Missing inline card')
+        }
+
+        expect(inlineCard.dataset.annotationReferenceIds).toBe('selector-1')
     })
 })

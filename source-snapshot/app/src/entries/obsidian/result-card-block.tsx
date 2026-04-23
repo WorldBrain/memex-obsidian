@@ -68,6 +68,19 @@ const PayloadScopedContext: React.FC<
 
         return {
             ...context,
+            globalLogic: {
+                ...context.globalLogic,
+                state: {
+                    ...context.globalLogic.state,
+                    contentEntities: mergedContentEntities,
+                    referencesByContentEntityId:
+                        mergedReferencesByContentEntityId,
+                    tags: {
+                        ...(context.globalLogic.state.tags ?? {}),
+                        tagEntities: mergedTagEntities,
+                    },
+                },
+            },
             globalState: {
                 ...context.globalState,
                 contentEntities: mergedContentEntities,
