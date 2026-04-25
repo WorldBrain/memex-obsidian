@@ -28,10 +28,21 @@ vi.mock('./runtime', () => ({
     ObsidianRuntimeProvider: MockObsidianRuntimeProvider,
 }))
 
+type MockUniversalResultCardRender = {
+    hasCachedTargetPage: boolean
+    hasLogicCachedTargetPage: boolean
+    annotationReferenceIds: string[]
+    annotationHydrationState?: string
+}
+
+const mockUniversalResultCardRenders: MockUniversalResultCardRender[] = []
+
 function MockUniversalResultCard({
     onClick,
+    annotationHydrationState,
 }: {
     onClick?: (event?: React.MouseEvent) => void
+    annotationHydrationState?: string
 }) {
     const context = React.useContext(ExtUIContext)
     const [isExpanded, setIsExpanded] = React.useState(false)
@@ -39,21 +50,19 @@ function MockUniversalResultCard({
         context?.globalLogic.state.referencesByContentEntityId['annotation-1']
             ?.contentEntityIds ?? []
 
+    mockUniversalResultCardRenders.push({
+        hasCachedTargetPage:
+            context?.globalState.contentEntities['target-page-1'] != null,
+        hasLogicCachedTargetPage:
+            context?.globalLogic.state.contentEntities['target-page-1'] != null,
+        annotationReferenceIds,
+        annotationHydrationState,
+    })
+
     return React.createElement(
         'div',
         {
             ['data-testid']: 'inline-card',
-            ['data-content-id']: 'page-1',
-            ['data-has-cached-target-page']:
-                context?.globalState.contentEntities['target-page-1'] != null
-                    ? 'true'
-                    : 'false',
-            ['data-has-logic-cached-target-page']:
-                context?.globalLogic.state.contentEntities['target-page-1'] !=
-                null
-                    ? 'true'
-                    : 'false',
-            ['data-annotation-reference-ids']: annotationReferenceIds.join(','),
             onClick: (event: React.MouseEvent<HTMLDivElement>) => {
                 if (
                     (event.target as HTMLElement | null)?.closest('a') != null
@@ -62,6 +71,9 @@ function MockUniversalResultCard({
                 }
 
                 if (!isExpanded) {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    event.nativeEvent.stopImmediatePropagation()
                     setIsExpanded(true)
                     return
                 }
@@ -88,6 +100,19 @@ function MockUniversalResultCard({
 vi.mock('~/features/search/ui/result-cards', () => ({
     UniversalResultCard: MockUniversalResultCard,
 }))
+
+function getLatestMockUniversalResultCardRender(): MockUniversalResultCardRender {
+    const latestRender =
+        mockUniversalResultCardRenders[
+            mockUniversalResultCardRenders.length - 1
+        ]
+
+    if (latestRender == null) {
+        throw new Error('UniversalResultCard mock was not rendered')
+    }
+
+    return latestRender
+}
 
 const contextValue = {
     services: {},
@@ -145,6 +170,7 @@ describe('ObsidianResultCardBlock', () => {
         root = null
         document.body.innerHTML = ''
         openExternalUrlWithAnchorMock.mockClear()
+        mockUniversalResultCardRenders.length = 0
     })
 
     it('expands on first click and opens on the second click', async () => {
@@ -193,6 +219,71 @@ describe('ObsidianResultCardBlock', () => {
         expect(openExternalUrlWithAnchorMock).toHaveBeenCalledWith(
             'https://example.com/article',
         )
+    })
+
+    it('does not fall through to Obsidian container click handling while expanding or opening', async () => {
+        document.body.innerHTML = '<div id="root"></div>'
+        const container = document.getElementById('root')
+        if (container == null) {
+            throw new Error('Missing root container')
+        }
+
+        const hostContainerClick = vi.fn()
+        root = createRoot(container)
+
+        flushSync(() => {
+            root?.render(
+                React.createElement(
+                    ThemeProvider,
+                    null,
+                    React.createElement(
+                        ExtUIContext.Provider,
+                        { value: contextValue },
+                        React.createElement(ObsidianResultCardBlock, {
+                            runtime: {} as never,
+                            source,
+                            onOpenExternalUrl: vi.fn(),
+                            onOpenNotes: vi.fn(),
+                        }),
+                    ),
+                ),
+            )
+        })
+
+        container.addEventListener('click', hostContainerClick)
+
+        const plainArea = document.querySelector(
+            '[data-testid="plain-area"]',
+        ) as HTMLElement | null
+        if (plainArea == null) {
+            throw new Error('Missing plain card area')
+        }
+
+        try {
+            plainArea.dispatchEvent(
+                new MouseEvent('click', {
+                    bubbles: true,
+                    cancelable: true,
+                }),
+            )
+            await Promise.resolve()
+
+            expect(hostContainerClick).not.toHaveBeenCalled()
+            expect(openExternalUrlWithAnchorMock).not.toHaveBeenCalled()
+
+            plainArea.dispatchEvent(
+                new MouseEvent('click', {
+                    bubbles: true,
+                    cancelable: true,
+                }),
+            )
+            await Promise.resolve()
+
+            expect(hostContainerClick).not.toHaveBeenCalled()
+            expect(openExternalUrlWithAnchorMock).toHaveBeenCalledTimes(1)
+        } finally {
+            container.removeEventListener('click', hostContainerClick)
+        }
     })
 
     it('does not hijack clicks on interactive inner links', async () => {
@@ -352,15 +443,10 @@ describe('ObsidianResultCardBlock', () => {
             )
         })
 
-        const inlineCard = document.querySelector(
-            '[data-testid="inline-card"]',
-        ) as HTMLElement | null
-        if (inlineCard == null) {
-            throw new Error('Missing inline card')
-        }
-
-        expect(inlineCard.dataset.hasCachedTargetPage).toBe('true')
-        expect(inlineCard.dataset.hasLogicCachedTargetPage).toBe('true')
+        expect(getLatestMockUniversalResultCardRender()).toMatchObject({
+            hasCachedTargetPage: true,
+            hasLogicCachedTargetPage: true,
+        })
     })
 
     it('adds dragged annotation reference rows to the scoped logic cache', async () => {
@@ -440,13 +526,9 @@ describe('ObsidianResultCardBlock', () => {
             )
         })
 
-        const inlineCard = document.querySelector(
-            '[data-testid="inline-card"]',
-        ) as HTMLElement | null
-        if (inlineCard == null) {
-            throw new Error('Missing inline card')
-        }
-
-        expect(inlineCard.dataset.annotationReferenceIds).toBe('selector-1')
+        expect(getLatestMockUniversalResultCardRender()).toMatchObject({
+            annotationReferenceIds: ['selector-1'],
+            annotationHydrationState: 'partial-error',
+        })
     })
 })

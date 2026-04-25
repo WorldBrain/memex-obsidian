@@ -207,6 +207,7 @@ const RenderedResultCard: React.FC<{
     const handleCardClick = React.useCallback(
         (event?: React.MouseEvent) => {
             event?.stopPropagation()
+            event?.nativeEvent.stopImmediatePropagation()
             if (event?.shiftKey) {
                 void handleOpenNotes()
                 return
@@ -233,6 +234,7 @@ const RenderedResultCard: React.FC<{
                 entity={entity}
                 snippets={snippets}
                 disableActions
+                annotationHydrationState="partial-error"
                 onOpenExternalUrl={onOpenExternalUrl}
                 onClick={handleCardClick}
             />

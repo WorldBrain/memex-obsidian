@@ -3,6 +3,7 @@ import type {
     ContentEntity,
     SelectorEntity,
     TagEntity,
+    TweetContentEntity,
 } from '@memex/common/features/page-interactions/types'
 import {
     findAnnotationTargetReferenceId,
@@ -51,6 +52,34 @@ export interface MemexResultCardTransferData {
 function trimNonEmptyString(value: string | undefined | null): string | null {
     const trimmed = value?.trim()
     return trimmed?.length ? trimmed : null
+}
+
+function getTweetQuoteTweetContentId(entity: ContentEntity): string | null {
+    if (entity.type !== 'twitter') {
+        return null
+    }
+
+    return trimNonEmptyString((entity as TweetContentEntity).quote_tweet)
+}
+
+function getContentEntityFromCache(params: {
+    contentEntitiesById: Record<string, ContentEntity>
+    id: string
+}): ContentEntity | undefined {
+    return (
+        params.contentEntitiesById[params.id] ??
+        Object.values(params.contentEntitiesById).find((entity) => {
+            const runtimeEntity = entity as ContentEntity & {
+                content_id?: string
+                userLibraryId?: string
+            }
+
+            return (
+                runtimeEntity.content_id === params.id ||
+                runtimeEntity.userLibraryId === params.id
+            )
+        })
+    )
 }
 
 function stripSearchMetadataFromEntity(
@@ -300,16 +329,33 @@ export function buildObsidianResultCardTransferData(params: {
     const tagEntities = (params.entity.tag_ids ?? [])
         .map((tagId) => params.tagEntitiesById[tagId])
         .filter((tag): tag is TagEntity => tag != null)
-    const relatedContentIds =
+    const referencedContentIds =
         params.referencesByContentEntityId?.[params.entity.id]
             ?.contentEntityIds ?? []
+    const rootQuoteTweetContentId = getTweetQuoteTweetContentId(params.entity)
+    const quoteTweetContentIds =
+        rootQuoteTweetContentId &&
+        getContentEntityFromCache({
+            contentEntitiesById: params.contentEntitiesById,
+            id: rootQuoteTweetContentId,
+        })
+            ? [rootQuoteTweetContentId]
+            : []
+    const relatedContentIds = Array.from(
+        new Set([...referencedContentIds, ...quoteTweetContentIds]),
+    )
     const rootReferenceEntity = resolveResultCardReferenceRootEntity({
         entity: params.entity,
         contentEntitiesById: params.contentEntitiesById,
         referencesByContentEntityId: params.referencesByContentEntityId,
     })
     const relatedContentEntities = relatedContentIds
-        .map((contentId) => params.contentEntitiesById[contentId])
+        .map((contentId) =>
+            getContentEntityFromCache({
+                contentEntitiesById: params.contentEntitiesById,
+                id: contentId,
+            }),
+        )
         .filter(
             (relatedEntity): relatedEntity is ContentEntity =>
                 relatedEntity != null,

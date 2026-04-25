@@ -204,6 +204,53 @@ describe('result-card-format', () => {
         )
     })
 
+    it('includes cached quoted tweets in shared Obsidian transfer data', () => {
+        const quotedTweetEntity = {
+            id: 'quoted-tweet-1',
+            type: 'twitter',
+            external_id: 'quoted-tweet-external-1',
+            text: 'Quoted tweet body',
+            author_handle: 'quoted_author',
+            author_name: 'Quoted Author',
+            media: [],
+            created_at: 1,
+            updated_at: 1,
+            tag_ids: [],
+        } as SearchResultEntity
+        const tweetEntity = {
+            id: 'tweet-with-quote-1',
+            type: 'twitter',
+            external_id: 'tweet-with-quote-external-1',
+            text: 'Parent tweet body',
+            author_handle: 'parent_author',
+            author_name: 'Parent Author',
+            quote_tweet: quotedTweetEntity.id,
+            media: [],
+            created_at: 1,
+            updated_at: 1,
+            tag_ids: [],
+        } as SearchResultEntity
+
+        const transferData = buildObsidianResultCardTransferData({
+            entity: tweetEntity,
+            contentEntitiesById: {
+                [tweetEntity.id]: tweetEntity,
+                [quotedTweetEntity.id]: quotedTweetEntity,
+            },
+            tagEntitiesById: {},
+        })
+
+        expect(transferData.payload.relatedContentEntities).toEqual([
+            {
+                ...quotedTweetEntity,
+                url: 'https://x.com/quoted_author/status/quoted-tweet-external-1',
+            },
+        ])
+        expect(transferData.codeBlock).toBe(
+            serializeMemexResultCardCodeBlock(transferData.payload),
+        )
+    })
+
     it('drops duplicated host metadata from annotation selectors that point at the root page', () => {
         const selectorEntity = {
             id: 'selector-1',
