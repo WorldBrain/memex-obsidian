@@ -54,8 +54,6 @@ function MockUniversalResultCard({
                     ? 'true'
                     : 'false',
             ['data-annotation-reference-ids']: annotationReferenceIds.join(','),
-            ['data-result-card-shrinkable']: 'true',
-            ['data-result-card-expanded']: isExpanded ? 'true' : 'false',
             onClick: (event: React.MouseEvent<HTMLDivElement>) => {
                 if (
                     (event.target as HTMLElement | null)?.closest('a') != null

@@ -206,6 +206,7 @@ const RenderedResultCard: React.FC<{
 
     const handleCardClick = React.useCallback(
         (event?: React.MouseEvent) => {
+            event?.stopPropagation()
             if (event?.shiftKey) {
                 void handleOpenNotes()
                 return

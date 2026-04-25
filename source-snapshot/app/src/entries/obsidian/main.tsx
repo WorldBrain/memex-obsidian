@@ -166,18 +166,10 @@ class ResultCardRenderChild extends MarkdownRenderChild {
             const resultCardBlock = this.containerEl.querySelector(
                 '.memex-obsidian-result-card-block',
             ) as HTMLElement | null
-            const cardRoot = this.containerEl.querySelector(
-                '[data-content-id]',
-            ) as HTMLElement | null
 
-            if (resultCardBlock == null || cardRoot == null) {
+            if (resultCardBlock == null) {
                 return
             }
-
-            const isShrinkable =
-                cardRoot.getAttribute('data-result-card-shrinkable') === 'true'
-            const isExpanded =
-                cardRoot.getAttribute('data-result-card-expanded') === 'true'
 
             if (event.shiftKey) {
                 const notesContentEntityId =
@@ -196,10 +188,6 @@ class ResultCardRenderChild extends MarkdownRenderChild {
                 return
             }
 
-            if (isShrinkable && !isExpanded) {
-                return
-            }
-
             const resultUrl = resultCardBlock.dataset.resultUrl
             if (!resultUrl) {
                 return
@@ -210,14 +198,10 @@ class ResultCardRenderChild extends MarkdownRenderChild {
             void this.plugin.openExternalUrl(resultUrl)
         }
 
-        this.containerEl.addEventListener('click', handleContainerClick, true)
+        this.containerEl.addEventListener('click', handleContainerClick)
 
         return () => {
-            this.containerEl.removeEventListener(
-                'click',
-                handleContainerClick,
-                true,
-            )
+            this.containerEl.removeEventListener('click', handleContainerClick)
         }
     }
 }
