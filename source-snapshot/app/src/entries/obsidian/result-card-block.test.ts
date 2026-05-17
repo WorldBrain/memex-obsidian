@@ -527,7 +527,7 @@ describe('ObsidianResultCardBlock', () => {
         })
 
         expect(getLatestMockUniversalResultCardRender()).toMatchObject({
-            annotationReferenceIds: ['selector-1'],
+            annotationReferenceIds: [{ id: 'selector-1' }],
             annotationHydrationState: 'partial-error',
         })
     })

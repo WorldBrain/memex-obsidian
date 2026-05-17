@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { toContentEntityReferences } from '@memex/common/features/page-interactions/types'
 import type { SearchResultEntity } from '~/features/search/ui/search-container/logic'
 import {
     buildObsidianResultCardTransferData,
@@ -159,7 +160,9 @@ describe('result-card-format', () => {
             },
             referencesByContentEntityId: {
                 [annotationEntity.id]: {
-                    contentEntityIds: [pageEntity.id],
+                    contentEntityIds: toContentEntityReferences([
+                        pageEntity.id,
+                    ]),
                     tagIds: [],
                 },
             },
@@ -313,7 +316,10 @@ describe('result-card-format', () => {
             },
             referencesByContentEntityId: {
                 [annotationEntity.id]: {
-                    contentEntityIds: [pageEntity.id, selectorEntity.id],
+                    contentEntityIds: toContentEntityReferences([
+                        pageEntity.id,
+                        selectorEntity.id,
+                    ]),
                     tagIds: [],
                 },
             },
@@ -403,11 +409,11 @@ describe('result-card-format', () => {
             },
             referencesByContentEntityId: {
                 [annotationEntity.id]: {
-                    contentEntityIds: [
+                    contentEntityIds: toContentEntityReferences([
                         rootPageEntity.id,
                         referencedPageEntity.id,
                         selectorEntity.id,
-                    ],
+                    ]),
                     tagIds: [],
                 },
             },

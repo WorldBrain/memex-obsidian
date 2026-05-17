@@ -103,10 +103,10 @@
 .memex-obsidian-inline-search input,
 .memex-obsidian-inline-search textarea,
 .memex-obsidian-inline-search select,
-[data-memex-popout='true'] button,
-[data-memex-popout='true'] input,
-[data-memex-popout='true'] textarea,
-[data-memex-popout='true'] select,
+.memex-popout-surface button,
+.memex-popout-surface input,
+.memex-popout-surface textarea,
+.memex-popout-surface select,
 [data-memex-tooltip='true'] button,
 [data-memex-tooltip='true'] input,
 [data-memex-tooltip='true'] textarea,
@@ -120,7 +120,7 @@
 
 .memex-obsidian-sidebar-root button,
 .memex-obsidian-inline-search button,
-[data-memex-popout='true'] button,
+.memex-popout-surface button,
 [data-memex-tooltip='true'] button {
     background: none;
     border: 0;

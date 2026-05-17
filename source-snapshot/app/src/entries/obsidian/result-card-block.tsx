@@ -8,6 +8,10 @@ import type {
     TweetContentEntity,
     TwitterProfileContentEntity,
 } from '@memex/common/features/page-interactions/types'
+import {
+    getContentEntityReferenceIds,
+    toContentEntityReferences,
+} from '@memex/common/features/page-interactions/types'
 import { getContentEntityUrl } from '@memex/common/features/page-interactions/utils'
 import {
     findAnnotationTargetReferenceId,
@@ -49,8 +53,10 @@ const PayloadScopedContext: React.FC<
         }
         if (relatedContentEntities?.length) {
             mergedReferencesByContentEntityId[entity.id] = {
-                contentEntityIds: relatedContentEntities.map(
-                    (relatedEntity) => relatedEntity.id,
+                contentEntityIds: toContentEntityReferences(
+                    relatedContentEntities.map(
+                        (relatedEntity) => relatedEntity.id,
+                    ),
                 ),
                 tagIds:
                     context.globalState.referencesByContentEntityId[entity.id]
@@ -148,8 +154,10 @@ const RenderedResultCard: React.FC<{
                         | ContentEntity
                         | undefined,
                 getRelatedContentIds: (id) =>
-                    context.globalState.referencesByContentEntityId[id]
-                        ?.contentEntityIds,
+                    getContentEntityReferenceIds(
+                        context.globalState.referencesByContentEntityId[id]
+                            ?.contentEntityIds,
+                    ),
             }) ?? null,
         [
             context.globalState.contentEntities,
@@ -165,9 +173,10 @@ const RenderedResultCard: React.FC<{
 
         const annotationReferenceIds = getAnnotationReferenceContentIds({
             annotationContent: (entity as AnnotationEntity).content,
-            relatedContentIds:
+            relatedContentIds: getContentEntityReferenceIds(
                 context.globalState.referencesByContentEntityId[entity.id]
                     ?.contentEntityIds,
+            ),
         })
 
         return (

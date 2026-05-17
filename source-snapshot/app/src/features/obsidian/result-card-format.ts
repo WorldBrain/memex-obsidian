@@ -1,9 +1,14 @@
 import type {
     AnnotationEntity,
+    ContentEntityReference,
     ContentEntity,
     SelectorEntity,
     TagEntity,
     TweetContentEntity,
+} from '@memex/common/features/page-interactions/types'
+import {
+    getContentEntityReferenceIds,
+    toContentEntityReferences,
 } from '@memex/common/features/page-interactions/types'
 import {
     findAnnotationTargetReferenceId,
@@ -39,7 +44,7 @@ export interface MemexResultCardPayload {
 }
 
 export interface MemexResultCardReferences {
-    contentEntityIds: string[]
+    contentEntityIds: ContentEntityReference[]
     tagIds: string[]
 }
 
@@ -151,9 +156,10 @@ function resolveResultCardReferenceRootEntity(params: {
         const annotationEntity = params.entity as AnnotationEntity
         const referenceContentIds = getAnnotationReferenceContentIds({
             annotationContent: annotationEntity.content,
-            relatedContentIds:
+            relatedContentIds: getContentEntityReferenceIds(
                 params.referencesByContentEntityId?.[annotationEntity.id]
                     ?.contentEntityIds,
+            ),
         })
         const rootReferenceId =
             findAnnotationTargetReferenceId({
@@ -310,7 +316,9 @@ function resolveMemexResultCardEntityUrl(params: {
             getPublicImageUrl,
             getParentEntity: (id) => params.contentEntitiesById[id],
             getRelatedContentIds: (id) =>
-                params.referencesByContentEntityId?.[id]?.contentEntityIds,
+                getContentEntityReferenceIds(
+                    params.referencesByContentEntityId?.[id]?.contentEntityIds,
+                ),
         }) ?? null
     )
 }
@@ -329,9 +337,10 @@ export function buildObsidianResultCardTransferData(params: {
     const tagEntities = (params.entity.tag_ids ?? [])
         .map((tagId) => params.tagEntitiesById[tagId])
         .filter((tag): tag is TagEntity => tag != null)
-    const referencedContentIds =
+    const referencedContentIds = getContentEntityReferenceIds(
         params.referencesByContentEntityId?.[params.entity.id]
-            ?.contentEntityIds ?? []
+            ?.contentEntityIds,
+    )
     const rootQuoteTweetContentId = getTweetQuoteTweetContentId(params.entity)
     const quoteTweetContentIds =
         rootQuoteTweetContentId &&
@@ -397,8 +406,10 @@ export function buildObsidianResultCardTransferData(params: {
             contentEntitiesById,
             referencesByContentEntityId: {
                 [payload.entity.id]: {
-                    contentEntityIds: relatedContentEntities.map(
-                        (relatedEntity) => relatedEntity.id,
+                    contentEntityIds: toContentEntityReferences(
+                        relatedContentEntities.map(
+                            (relatedEntity) => relatedEntity.id,
+                        ),
                     ),
                     tagIds: [],
                 },
