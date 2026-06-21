@@ -2,7 +2,9 @@ import React from 'react'
 import { createRoot, Root } from 'react-dom/client'
 import {
     App,
+    DropdownComponent,
     Editor,
+    FuzzySuggestModal,
     MarkdownRenderChild,
     Modal,
     Notice,
@@ -10,6 +12,7 @@ import {
     PluginSettingTab,
     SecretComponent,
     Setting,
+    TFolder,
     type TAbstractFile,
     normalizePath,
 } from 'obsidian'
@@ -44,6 +47,91 @@ import {
 
 const OAUTH_PROTOCOL_ACTION = 'memex-auth'
 const OAUTH_LOGIN_PROVIDER = 'google'
+const ALL_CONTENT_TYPES_DROPDOWN_VALUE = '__all_content_types__'
+const CUSTOM_CONTENT_TYPES_DROPDOWN_VALUE = '__custom_content_types__'
+
+type ContentTypeDropdownValue =
+    | ObsidianImportContentType
+    | typeof ALL_CONTENT_TYPES_DROPDOWN_VALUE
+    | typeof CUSTOM_CONTENT_TYPES_DROPDOWN_VALUE
+
+type FolderSuggestion = {
+    path: string
+    label: string
+}
+
+class FolderSuggestModal extends FuzzySuggestModal<FolderSuggestion> {
+    constructor(
+        app: App,
+        private readonly options: {
+            currentPath: string
+            onChoose: (path: string) => void
+        },
+    ) {
+        super(app)
+        this.setPlaceholder('Search vault folders')
+    }
+
+    getItems(): FolderSuggestion[] {
+        const folders = this.app.vault
+            .getAllLoadedFiles()
+            .filter((file): file is TFolder => file instanceof TFolder)
+            .map((folder) => ({
+                path: normalizePath(folder.path),
+                label: normalizePath(folder.path),
+            }))
+            .filter((folder) => folder.path.length > 0)
+            .sort((first, second) => first.path.localeCompare(second.path))
+
+        const currentPath = normalizePath(this.options.currentPath)
+        const folderPaths = new Set(folders.map((folder) => folder.path))
+        if (currentPath.length > 0 && !folderPaths.has(currentPath)) {
+            folders.unshift({
+                path: currentPath,
+                label: `${currentPath} (current)`,
+            })
+        }
+
+        return [{ path: '', label: 'Vault root' }, ...folders]
+    }
+
+    getItemText(item: FolderSuggestion): string {
+        return item.label
+    }
+
+    onChooseItem(
+        item: FolderSuggestion,
+        _event: MouseEvent | KeyboardEvent,
+    ): void {
+        this.options.onChoose(item.path)
+    }
+}
+
+function getFolderSettingButtonText(path: string): string {
+    const normalizedPath = normalizePath(path)
+    return normalizedPath.length > 0 ? normalizedPath : 'Vault root'
+}
+
+function getContentTypeDropdownValue(
+    contentTypes: ObsidianImportContentType[],
+): ContentTypeDropdownValue {
+    if (areAllImportContentTypesSelected(contentTypes)) {
+        return ALL_CONTENT_TYPES_DROPDOWN_VALUE
+    }
+
+    return contentTypes.length === 1
+        ? contentTypes[0]
+        : CUSTOM_CONTENT_TYPES_DROPDOWN_VALUE
+}
+
+function areAllImportContentTypesSelected(
+    contentTypes: ObsidianImportContentType[],
+): boolean {
+    const selectedTypes = new Set(contentTypes)
+    return OBSIDIAN_IMPORT_CONTENT_TYPE_DEFINITIONS.every((definition) =>
+        selectedTypes.has(definition.type),
+    )
+}
 
 class CallbackUrlModal extends Modal {
     private callbackUrl = ''
@@ -299,27 +387,31 @@ class MemexObsidianSettingTab extends PluginSettingTab {
             },
         })
 
-        this.addPullImportTextSetting({
+        this.addPullImportFolderSetting({
             name: 'Memex plugin folder',
             desc: 'Top-level vault folder used for Memex plugin templates and imports.',
             value: this.plugin.settings.pullImport.pluginFolderPath,
             onChange: (value) => {
-                void this.plugin.updatePullImportSettings({
-                    ...this.plugin.settings.pullImport,
-                    pluginFolderPath: value,
-                })
+                void this.plugin
+                    .updatePullImportSettings({
+                        ...this.plugin.settings.pullImport,
+                        pluginFolderPath: value,
+                    })
+                    .then(() => this.display())
             },
         })
 
-        this.addPullImportTextSetting({
+        this.addPullImportFolderSetting({
             name: 'Template folder',
             desc: 'Vault folder containing one editable template per Memex content type.',
             value: this.plugin.settings.pullImport.templatesFolderPath,
             onChange: (value) => {
-                void this.plugin.updatePullImportSettings({
-                    ...this.plugin.settings.pullImport,
-                    templatesFolderPath: value,
-                })
+                void this.plugin
+                    .updatePullImportSettings({
+                        ...this.plugin.settings.pullImport,
+                        templatesFolderPath: value,
+                    })
+                    .then(() => this.display())
             },
         })
 
@@ -407,46 +499,24 @@ class MemexObsidianSettingTab extends PluginSettingTab {
             },
         })
 
-        this.addPullImportTextSetting({
+        this.addPullImportFolderSetting({
             name: 'Destination folder',
             desc: 'Imported notes for this rule are created in this folder.',
             value: rule.targetFolderPath,
             onChange: (targetFolderPath) => {
-                void this.plugin.updatePullImportRule(rule.id, {
-                    targetFolderPath,
-                })
+                void this.plugin
+                    .updatePullImportRule(rule.id, {
+                        targetFolderPath,
+                    })
+                    .then(() => this.display())
             },
         })
 
         new Setting(this.containerEl)
             .setName('Content types')
-            .setDesc('Select every Memex content type this rule should import.')
-            .addComponent((el) => {
-                const select = document.createElement('select')
-                select.multiple = true
-                select.size = 8
-                select.style.minWidth = '220px'
-
-                for (const definition of OBSIDIAN_IMPORT_CONTENT_TYPE_DEFINITIONS) {
-                    const option = document.createElement('option')
-                    option.value = definition.type
-                    option.textContent = definition.label
-                    option.selected = rule.contentTypes.includes(
-                        definition.type,
-                    )
-                    select.appendChild(option)
-                }
-
-                select.addEventListener('change', () => {
-                    const contentTypes = Array.from(select.selectedOptions).map(
-                        (option) => option.value as ObsidianImportContentType,
-                    )
-                    void this.plugin.updatePullImportRule(rule.id, {
-                        contentTypes,
-                    })
-                })
-
-                el.appendChild(select)
+            .setDesc('Choose which Memex content type this rule should import.')
+            .addDropdown((dropdown) => {
+                this.configureContentTypeDropdown(dropdown, rule)
             })
 
         new Setting(this.containerEl)
@@ -501,6 +571,64 @@ class MemexObsidianSettingTab extends PluginSettingTab {
                 })
                 el.appendChild(input)
             })
+    }
+
+    private addPullImportFolderSetting(params: {
+        name: string
+        desc: string
+        value: string
+        onChange: (value: string) => void
+    }): void {
+        new Setting(this.containerEl)
+            .setName(params.name)
+            .setDesc(params.desc)
+            .addButton((button) => {
+                button
+                    .setButtonText(getFolderSettingButtonText(params.value))
+                    .onClick(() => {
+                        new FolderSuggestModal(this.app, {
+                            currentPath: params.value,
+                            onChoose: params.onChange,
+                        }).open()
+                    })
+            })
+    }
+
+    private configureContentTypeDropdown(
+        dropdown: DropdownComponent,
+        rule: PullImportRuleSettings,
+    ): void {
+        const selectedValue = getContentTypeDropdownValue(rule.contentTypes)
+
+        dropdown.addOption(
+            ALL_CONTENT_TYPES_DROPDOWN_VALUE,
+            `All content types (${OBSIDIAN_IMPORT_CONTENT_TYPE_DEFINITIONS.length})`,
+        )
+        if (selectedValue === CUSTOM_CONTENT_TYPES_DROPDOWN_VALUE) {
+            dropdown.addOption(
+                CUSTOM_CONTENT_TYPES_DROPDOWN_VALUE,
+                `Custom selection (${rule.contentTypes.length})`,
+            )
+        }
+        for (const definition of OBSIDIAN_IMPORT_CONTENT_TYPE_DEFINITIONS) {
+            dropdown.addOption(definition.type, definition.label)
+        }
+
+        dropdown.setValue(selectedValue)
+        dropdown.onChange((value) => {
+            if (value === CUSTOM_CONTENT_TYPES_DROPDOWN_VALUE) {
+                return
+            }
+
+            const contentTypes =
+                value === ALL_CONTENT_TYPES_DROPDOWN_VALUE
+                    ? OBSIDIAN_IMPORT_CONTENT_TYPE_DEFINITIONS.map(
+                          (definition) => definition.type,
+                      )
+                    : [value as ObsidianImportContentType]
+
+            void this.plugin.updatePullImportRule(rule.id, { contentTypes })
+        })
     }
 }
 

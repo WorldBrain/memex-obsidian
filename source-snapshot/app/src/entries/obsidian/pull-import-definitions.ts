@@ -217,6 +217,8 @@ export const OBSIDIAN_IMPORT_CONTENT_TYPE_DEFINITIONS: ImportContentTypeDefiniti
             { path: 'media', label: 'Audio media metadata' },
             { path: 'transcript_status', label: 'Transcript status' },
             { path: 'summary', label: 'Summary' },
+            { path: 'summary_markdown', label: 'AI summary response Markdown' },
+            { path: 'transcript_markdown', label: 'Transcript Markdown' },
         ]),
         defineContentType('chatThread', 'Chat thread', [
             { path: 'title', label: 'Title' },

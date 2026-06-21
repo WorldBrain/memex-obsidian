@@ -2,7 +2,10 @@ import type {
     CommonJson,
     CommonSupabaseClient,
 } from '@memex/common/storage/supabase-types'
+import type { ChatMessageEntity } from '@memex/common/features/page-interactions/types'
+import { formatSecondsToHHMMSS } from '@memex/common/utils/format-time'
 import type { App, TAbstractFile, TFile, Vault } from 'obsidian'
+import { getLatestAssistantMessageMarkdown } from '~/features/ai-chat/utils/assistant-message-markdown'
 import {
     DEFAULT_MEMEX_IMPORTS_FOLDER,
     DEFAULT_MEMEX_PLUGIN_FOLDER,
@@ -247,7 +250,17 @@ export class ObsidianPullImportService {
 
         for (const definition of OBSIDIAN_IMPORT_CONTENT_TYPE_DEFINITIONS) {
             const templatePath = getTemplatePath(settings, definition.type)
-            if (this.app.vault.getAbstractFileByPath(templatePath) != null) {
+            const existingTemplate =
+                this.app.vault.getAbstractFileByPath(templatePath)
+            if (existingTemplate != null) {
+                if (
+                    definition.type === 'audioRecording' &&
+                    isVaultMarkdownFile(this.app.vault, existingTemplate)
+                ) {
+                    await this.upgradeLegacyAudioRecordingTemplate(
+                        existingTemplate,
+                    )
+                }
                 continue
             }
 
@@ -256,6 +269,22 @@ export class ObsidianPullImportService {
                 buildDefaultTemplate(definition.type),
             )
         }
+    }
+
+    private async upgradeLegacyAudioRecordingTemplate(
+        templateFile: TFile,
+    ): Promise<void> {
+        const currentTemplate = await this.app.vault.read(templateFile)
+        if (
+            currentTemplate.trim() !==
+            buildLegacyAudioRecordingDefaultTemplate().trim()
+        ) {
+            return
+        }
+
+        await this.app.vault.process(templateFile, () =>
+            buildDefaultTemplate('audioRecording'),
+        )
     }
 
     private async reconcileTemplateLocation(): Promise<void> {
@@ -360,9 +389,75 @@ export class ObsidianPullImportService {
             templateFile != null
                 ? await this.app.vault.read(templateFile)
                 : buildDefaultTemplate(item.content_type)
-        const rendered = renderTemplate(template, getTemplateMetadata(item))
+        const metadata = await this.getTemplateMetadata(item)
+        const rendered = renderTemplate(template, metadata)
 
         return ensureHiddenContentIdMarker(rendered, item.content_id)
+    }
+
+    private async getTemplateMetadata(
+        item: ObsidianPullImportRpcItem,
+    ): Promise<UnknownRecord> {
+        const metadata = getTemplateMetadata(item)
+        if (item.content_type !== 'audioRecording') {
+            return metadata
+        }
+
+        const fullMetadata = await this.loadContentEntityMetadata(
+            item.content_id,
+        )
+        if (fullMetadata == null) {
+            throw new Error(
+                `Missing audio recording metadata for Obsidian import ${item.content_id}`,
+            )
+        }
+
+        return {
+            ...metadata,
+            summary_markdown:
+                await this.loadAudioRecordingSummaryMarkdown(fullMetadata),
+            transcript_markdown:
+                buildAudioRecordingTranscriptMarkdown(fullMetadata),
+        }
+    }
+
+    private async loadAudioRecordingSummaryMarkdown(
+        audioMetadata: UnknownRecord,
+    ): Promise<string> {
+        const summaryThreadId = getAudioRecordingSummaryThreadId(audioMetadata)
+        if (summaryThreadId == null) {
+            return ''
+        }
+
+        const summaryThreadMetadata =
+            await this.loadContentEntityMetadata(summaryThreadId)
+        if (summaryThreadMetadata == null) {
+            throw new Error(
+                `Missing audio summary thread metadata for Obsidian import ${summaryThreadId}`,
+            )
+        }
+
+        return (
+            getLatestAssistantMessageMarkdown(
+                getChatThreadMessages(summaryThreadMetadata),
+            ) ?? ''
+        )
+    }
+
+    private async loadContentEntityMetadata(
+        contentId: string,
+    ): Promise<UnknownRecord | null> {
+        const { data, error } = await this.supabaseClient
+            .from('content_entities')
+            .select('metadata')
+            .eq('id', contentId)
+            .maybeSingle()
+
+        if (error != null) {
+            throw error
+        }
+
+        return isRecord(data?.metadata) ? data.metadata : null
     }
 
     private async findAnnotationParentFile(
@@ -475,10 +570,43 @@ export function createDefaultPullImportRule(
 export function buildDefaultTemplate(
     contentType: ObsidianImportContentType,
 ): string {
+    if (contentType === 'audioRecording') {
+        return buildAudioRecordingDefaultTemplate()
+    }
+
+    return buildLegacyDefaultTemplate(contentType)
+}
+
+function buildLegacyDefaultTemplate(
+    contentType: ObsidianImportContentType,
+): string {
     const definition =
         OBSIDIAN_IMPORT_CONTENT_TYPE_DEFINITION_BY_TYPE.get(contentType)
+    return buildGenericDefaultTemplate(
+        contentType,
+        definition?.placeholders ?? [],
+    )
+}
+
+function buildLegacyAudioRecordingDefaultTemplate(): string {
+    const definition =
+        OBSIDIAN_IMPORT_CONTENT_TYPE_DEFINITION_BY_TYPE.get('audioRecording')
+    return buildGenericDefaultTemplate(
+        'audioRecording',
+        (definition?.placeholders ?? []).filter(
+            (placeholder) =>
+                placeholder.path !== 'summary_markdown' &&
+                placeholder.path !== 'transcript_markdown',
+        ),
+    )
+}
+
+function buildGenericDefaultTemplate(
+    contentType: ObsidianImportContentType,
+    placeholders: Array<{ label: string; path: string }>,
+): string {
     const titlePlaceholder = getPreferredTitlePlaceholder(contentType)
-    const placeholderLines = (definition?.placeholders ?? [])
+    const placeholderLines = placeholders
         .map(
             (placeholder) =>
                 `- ${placeholder.label}: {{metadata.${placeholder.path}}}`,
@@ -508,6 +636,45 @@ export function buildDefaultTemplate(
         '## Content',
         '',
         '{{metadata.text}}',
+        '',
+        '## Metadata',
+        '',
+        placeholderLines,
+        '',
+    ].join('\n')
+}
+
+function buildAudioRecordingDefaultTemplate(): string {
+    const definition =
+        OBSIDIAN_IMPORT_CONTENT_TYPE_DEFINITION_BY_TYPE.get('audioRecording')
+    const placeholderLines = (definition?.placeholders ?? [])
+        .map(
+            (placeholder) =>
+                `- ${placeholder.label}: {{metadata.${placeholder.path}}}`,
+        )
+        .join('\n')
+
+    return [
+        '---',
+        'memex_id: "{{metadata.id}}"',
+        'memex_content_id: "{{metadata.content_id}}"',
+        'memex_library_id: "{{metadata.library_id}}"',
+        'memex_type: "{{metadata.type}}"',
+        'memex_external_id: "{{metadata.external_id}}"',
+        'memex_updated_at: "{{metadata.updated_at}}"',
+        '---',
+        '',
+        '<!-- memex-content-id: {{metadata.content_id}} -->',
+        '',
+        '# {{metadata.title}}',
+        '',
+        '## AI Summary',
+        '',
+        '{{metadata.summary_markdown}}',
+        '',
+        '## Transcript',
+        '',
+        '{{metadata.transcript_markdown}}',
         '',
         '## Metadata',
         '',
@@ -569,6 +736,146 @@ function getTemplateMetadata(item: ObsidianPullImportRpcItem): UnknownRecord {
     }
 }
 
+function buildAudioRecordingTranscriptMarkdown(
+    metadata: UnknownRecord,
+): string {
+    const audioEntry = getPrimaryAudioEntry(metadata)
+    const segments = getPreferredTranscriptSegments(audioEntry)
+    if (segments.length === 0) {
+        return ''
+    }
+
+    return segments
+        .map((segment) => {
+            const text = normalizeString(segment.text, '')
+            if (!text) {
+                return ''
+            }
+
+            const timestamp = formatTranscriptTimestamp(segment.offset)
+            const speakerLabel = getTranscriptSegmentSpeakerLabel({
+                audioEntry,
+                segment,
+            })
+            const prefix = [
+                timestamp ? `[${timestamp}]` : '',
+                speakerLabel ? `**${speakerLabel}:**` : '',
+            ]
+                .filter(Boolean)
+                .join(' ')
+
+            return prefix ? `${prefix} ${text}` : text
+        })
+        .filter(Boolean)
+        .join('\n\n')
+}
+
+function getPrimaryAudioEntry(metadata: UnknownRecord): UnknownRecord | null {
+    const media = metadata.media
+    if (!Array.isArray(media)) {
+        return null
+    }
+
+    return (
+        media.find(
+            (entry): entry is UnknownRecord =>
+                isRecord(entry) && entry.type === 'audio',
+        ) ??
+        media.find((entry): entry is UnknownRecord => isRecord(entry)) ??
+        null
+    )
+}
+
+function getPreferredTranscriptSegments(
+    audioEntry: UnknownRecord | null,
+): UnknownRecord[] {
+    if (audioEntry == null) {
+        return []
+    }
+
+    const directTranscript = getTranscriptSegmentsFromMap(audioEntry.transcript)
+    if (directTranscript.length > 0) {
+        return directTranscript
+    }
+
+    if (!Array.isArray(audioEntry.segments)) {
+        return []
+    }
+
+    return audioEntry.segments.flatMap((segment) =>
+        isRecord(segment)
+            ? getTranscriptSegmentsFromMap(segment.transcript)
+            : [],
+    )
+}
+
+function getTranscriptSegmentsFromMap(rawTranscript: unknown): UnknownRecord[] {
+    if (!isRecord(rawTranscript)) {
+        return []
+    }
+
+    if (Array.isArray(rawTranscript.en)) {
+        return rawTranscript.en.filter(isTranscriptSegment)
+    }
+
+    for (const [key, value] of Object.entries(rawTranscript)) {
+        if (key === 'speakerIds') {
+            continue
+        }
+        if (Array.isArray(value)) {
+            return value.filter(isTranscriptSegment)
+        }
+    }
+
+    return []
+}
+
+function isTranscriptSegment(value: unknown): value is UnknownRecord {
+    return isRecord(value) && typeof value.text === 'string'
+}
+
+function getTranscriptSegmentSpeakerLabel(params: {
+    audioEntry: UnknownRecord | null
+    segment: UnknownRecord
+}): string | null {
+    const speakerId = normalizeString(params.segment.speakerId, '')
+    if (!speakerId || !isRecord(params.audioEntry?.speaker_labels)) {
+        return null
+    }
+
+    const speakerLabel = params.audioEntry.speaker_labels[speakerId]
+    if (!isRecord(speakerLabel)) {
+        return null
+    }
+
+    return normalizeString(speakerLabel.label, '')
+}
+
+function formatTranscriptTimestamp(rawOffset: unknown): string {
+    if (typeof rawOffset === 'number' && Number.isFinite(rawOffset)) {
+        return formatSecondsToHHMMSS(rawOffset)
+    }
+
+    return normalizeString(rawOffset, '')
+}
+
+function getAudioRecordingSummaryThreadId(
+    metadata: UnknownRecord,
+): string | null {
+    const summary = normalizeString(metadata.summary, '')
+    return isUuidString(summary) ? summary : null
+}
+
+function getChatThreadMessages(
+    metadata: UnknownRecord,
+): Array<Pick<ChatMessageEntity, 'llmMessage'>> {
+    return Array.isArray(metadata.messages)
+        ? (metadata.messages.filter(isRecord) as Array<
+              Pick<ChatMessageEntity, 'llmMessage'>
+          >)
+        : []
+}
+
 function ensureHiddenContentIdMarker(
     markdown: string,
     contentId: string,
@@ -600,6 +907,12 @@ async function findImportedContentFileByContentId(
     }
 
     return null
+}
+
+function isVaultMarkdownFile(vault: Vault, file: TAbstractFile): file is TFile {
+    return vault
+        .getMarkdownFiles()
+        .some((markdownFile) => markdownFile.path === file.path)
 }
 
 function containsContentIdMarker(markdown: string, contentId: string): boolean {
@@ -790,6 +1103,12 @@ function normalizeVaultPath(rawValue: unknown, fallback: string): string {
 
 function normalizeString(rawValue: unknown, fallback: string): string {
     return typeof rawValue === 'string' ? rawValue.trim() : fallback
+}
+
+function isUuidString(value: string): boolean {
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+        value.trim(),
+    )
 }
 
 async function ensureFolder(vault: Vault, folderPath: string): Promise<void> {
