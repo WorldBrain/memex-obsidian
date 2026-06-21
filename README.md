@@ -41,6 +41,16 @@ Use it to search your saved web pages, notes, highlights, PDFs, videos, images, 
 
 If the browser login does not return to Obsidian automatically, use `Paste Callback URL` in the Memex plugin settings and paste the full `obsidian://memex-auth?...` URL from your browser.
 
+## Pull Imports
+
+Pull imports are disabled by default. Open `Settings` > `Memex`, enable `Pull imports`, choose a poll interval, and configure import rules.
+
+Each rule selects one or more Memex content types and one Obsidian destination folder. Rules are evaluated independently, so overlapping rules create one note per matching rule. The plugin imports only new authenticated-library items that have finished indexing.
+
+Imported notes include a hidden `<!-- memex-content-id: ... -->` marker. Annotation imports use that marker to find the parent content note and append under `## Annotations` when the parent is already in the vault. If the parent note is not found, the annotation is imported as a standalone note in the matching rule's destination folder.
+
+Templates are stored in your vault under `Memex Plugin/Templates` as editable Markdown files. Missing default templates are restored on startup without overwriting your edits. The settings screen links to the placeholder reference in the Memex docs.
+
 ## Support
 
 Need help? Visit [help.memex.garden](https://help.memex.garden).

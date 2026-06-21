@@ -10,6 +10,7 @@ import {
     PluginSettingTab,
     SecretComponent,
     Setting,
+    type TAbstractFile,
     normalizePath,
 } from 'obsidian'
 import { ObsidianResultCardBlock } from './result-card-block'
@@ -26,17 +27,23 @@ import {
     MEMEX_RESULT_CARD_DRAG_MIME_TYPE,
 } from '~/features/obsidian/result-card-format'
 import { getSupabaseClient } from '~/setup/supabase'
+import {
+    DEFAULT_SETTINGS,
+    OBSIDIAN_IMPORT_CONTENT_TYPE_DEFINITIONS,
+    OBSIDIAN_IMPORT_DOCS_URL,
+    type MemexObsidianSettings,
+    type ObsidianImportContentType,
+    type PullImportRuleSettings,
+    type PullImportSettings,
+} from './pull-import-definitions'
+import {
+    ObsidianPullImportService,
+    createDefaultPullImportRule,
+    normalizeMemexObsidianSettings,
+} from './pull-import-service'
 
 const OAUTH_PROTOCOL_ACTION = 'memex-auth'
 const OAUTH_LOGIN_PROVIDER = 'google'
-
-interface MemexObsidianSettings {
-    callbackSecretId: string
-}
-
-const DEFAULT_SETTINGS: MemexObsidianSettings = {
-    callbackSecretId: 'memex-last-oauth-callback-url',
-}
 
 class CallbackUrlModal extends Modal {
     private callbackUrl = ''
@@ -257,6 +264,243 @@ class MemexObsidianSettingTab extends PluginSettingTab {
                         void this.plugin.saveSettings()
                     }),
             )
+
+        const pullImportTitle = document.createElement('h3')
+        pullImportTitle.textContent = 'Pull imports'
+        containerEl.appendChild(pullImportTitle)
+
+        this.addPullImportCheckboxSetting({
+            name: 'Enable pull imports',
+            desc: 'Check Memex on an interval and import new matching content into this vault.',
+            checked: this.plugin.settings.pullImport.enabled,
+            onChange: (enabled) => {
+                const pullImport = this.plugin.settings.pullImport
+                void this.plugin.updatePullImportSettings({
+                    ...pullImport,
+                    enabled,
+                    lastFetchedUpdatedAt:
+                        enabled && pullImport.lastFetchedUpdatedAt == null
+                            ? new Date().toISOString()
+                            : pullImport.lastFetchedUpdatedAt,
+                })
+            },
+        })
+
+        this.addPullImportTextSetting({
+            name: 'Poll interval',
+            desc: 'Minutes between checks. The minimum is 1 minute.',
+            value: String(this.plugin.settings.pullImport.pollIntervalMinutes),
+            inputType: 'number',
+            onChange: (value) => {
+                void this.plugin.updatePullImportSettings({
+                    ...this.plugin.settings.pullImport,
+                    pollIntervalMinutes: Number.parseInt(value, 10),
+                })
+            },
+        })
+
+        this.addPullImportTextSetting({
+            name: 'Memex plugin folder',
+            desc: 'Top-level vault folder used for Memex plugin templates and imports.',
+            value: this.plugin.settings.pullImport.pluginFolderPath,
+            onChange: (value) => {
+                void this.plugin.updatePullImportSettings({
+                    ...this.plugin.settings.pullImport,
+                    pluginFolderPath: value,
+                })
+            },
+        })
+
+        this.addPullImportTextSetting({
+            name: 'Template folder',
+            desc: 'Vault folder containing one editable template per Memex content type.',
+            value: this.plugin.settings.pullImport.templatesFolderPath,
+            onChange: (value) => {
+                void this.plugin.updatePullImportSettings({
+                    ...this.plugin.settings.pullImport,
+                    templatesFolderPath: value,
+                })
+            },
+        })
+
+        new Setting(containerEl)
+            .setName('Import cursor')
+            .setDesc(
+                this.plugin.settings.pullImport.lastFetchedUpdatedAt ??
+                    'Imports will start from the current time when first enabled or run.',
+            )
+            .addButton((button) => {
+                button.setButtonText('Reset to Now').onClick(() => {
+                    void this.plugin.updatePullImportSettings({
+                        ...this.plugin.settings.pullImport,
+                        lastFetchedUpdatedAt: new Date().toISOString(),
+                    })
+                })
+            })
+
+        new Setting(containerEl)
+            .setName('Run pull import now')
+            .setDesc('Check Memex immediately using the current rules.')
+            .addButton((button) => {
+                button
+                    .setButtonText('Run Now')
+                    .setCta()
+                    .onClick(() => {
+                        void this.plugin.runPullImportNow()
+                    })
+            })
+
+        new Setting(containerEl)
+            .setName('Template placeholder docs')
+            .setDesc('Open the list of supported template placeholders.')
+            .addButton((button) => {
+                button.setButtonText('Open Docs').onClick(() => {
+                    this.plugin.openExternalUrl(OBSIDIAN_IMPORT_DOCS_URL)
+                })
+            })
+
+        const rulesTitle = document.createElement('h4')
+        rulesTitle.textContent = 'Import rules'
+        containerEl.appendChild(rulesTitle)
+
+        this.plugin.settings.pullImport.rules.forEach((rule, index) => {
+            this.displayPullImportRule(rule, index)
+        })
+
+        new Setting(containerEl)
+            .setName('Add import rule')
+            .setDesc(
+                'Rules are evaluated independently. Overlaps create one note per matching rule.',
+            )
+            .addButton((button) => {
+                button.setButtonText('Add Rule').onClick(() => {
+                    void this.plugin
+                        .addPullImportRule()
+                        .then(() => this.display())
+                })
+            })
+    }
+
+    private displayPullImportRule(
+        rule: PullImportRuleSettings,
+        index: number,
+    ): void {
+        const title = document.createElement('h5')
+        title.textContent = `${index + 1}. ${rule.name}`
+        this.containerEl.appendChild(title)
+
+        this.addPullImportCheckboxSetting({
+            name: 'Rule enabled',
+            desc: 'Disabled rules are ignored by polling.',
+            checked: rule.enabled,
+            onChange: (enabled) => {
+                void this.plugin.updatePullImportRule(rule.id, { enabled })
+            },
+        })
+
+        this.addPullImportTextSetting({
+            name: 'Rule name',
+            desc: 'Only shown in these settings.',
+            value: rule.name,
+            onChange: (name) => {
+                void this.plugin.updatePullImportRule(rule.id, { name })
+            },
+        })
+
+        this.addPullImportTextSetting({
+            name: 'Destination folder',
+            desc: 'Imported notes for this rule are created in this folder.',
+            value: rule.targetFolderPath,
+            onChange: (targetFolderPath) => {
+                void this.plugin.updatePullImportRule(rule.id, {
+                    targetFolderPath,
+                })
+            },
+        })
+
+        new Setting(this.containerEl)
+            .setName('Content types')
+            .setDesc('Select every Memex content type this rule should import.')
+            .addComponent((el) => {
+                const select = document.createElement('select')
+                select.multiple = true
+                select.size = 8
+                select.style.minWidth = '220px'
+
+                for (const definition of OBSIDIAN_IMPORT_CONTENT_TYPE_DEFINITIONS) {
+                    const option = document.createElement('option')
+                    option.value = definition.type
+                    option.textContent = definition.label
+                    option.selected = rule.contentTypes.includes(
+                        definition.type,
+                    )
+                    select.appendChild(option)
+                }
+
+                select.addEventListener('change', () => {
+                    const contentTypes = Array.from(select.selectedOptions).map(
+                        (option) => option.value as ObsidianImportContentType,
+                    )
+                    void this.plugin.updatePullImportRule(rule.id, {
+                        contentTypes,
+                    })
+                })
+
+                el.appendChild(select)
+            })
+
+        new Setting(this.containerEl)
+            .setName('Remove rule')
+            .setDesc('Remove this import rule.')
+            .addButton((button) => {
+                button.setButtonText('Remove').onClick(() => {
+                    void this.plugin
+                        .removePullImportRule(rule.id)
+                        .then(() => this.display())
+                })
+            })
+    }
+
+    private addPullImportCheckboxSetting(params: {
+        name: string
+        desc: string
+        checked: boolean
+        onChange: (checked: boolean) => void
+    }): void {
+        new Setting(this.containerEl)
+            .setName(params.name)
+            .setDesc(params.desc)
+            .addComponent((el) => {
+                const input = document.createElement('input')
+                input.type = 'checkbox'
+                input.checked = params.checked
+                input.addEventListener('change', () => {
+                    params.onChange(input.checked)
+                })
+                el.appendChild(input)
+            })
+    }
+
+    private addPullImportTextSetting(params: {
+        name: string
+        desc: string
+        value: string
+        inputType?: 'number' | 'text'
+        onChange: (value: string) => void
+    }): void {
+        new Setting(this.containerEl)
+            .setName(params.name)
+            .setDesc(params.desc)
+            .addComponent((el) => {
+                const input = document.createElement('input')
+                input.type = params.inputType ?? 'text'
+                input.value = params.value
+                input.style.minWidth = '240px'
+                input.addEventListener('change', () => {
+                    params.onChange(input.value)
+                })
+                el.appendChild(input)
+            })
     }
 }
 
@@ -272,6 +516,8 @@ export default class MemexObsidianPlugin extends Plugin {
     })
     private authSessionPersistence: ObsidianAuthSessionPersistence | null = null
     private stopAuthSessionSync: (() => void) | null = null
+    private pullImportService: ObsidianPullImportService | null = null
+    private pullImportIntervalId: number | null = null
 
     private resolveRuntimeUrl(path: string): string | null {
         const adapter = this.app.vault?.adapter
@@ -294,6 +540,18 @@ export default class MemexObsidianPlugin extends Plugin {
         await authSessionPersistence.restoreSession()
         this.stopAuthSessionSync = authSessionPersistence.startSync()
         await authSessionPersistence.syncCurrentSession()
+        this.pullImportService = new ObsidianPullImportService({
+            app: this.app,
+            supabaseClient: getSupabaseClient(),
+            getSettings: () => this.settings.pullImport,
+            updateSettings: (settings) =>
+                this.updatePullImportSettings(settings),
+        })
+        await this.pullImportService.initialize()
+        this.configurePullImportPolling()
+        if (this.settings.pullImport.enabled) {
+            void this.runPullImport({ silent: true })
+        }
 
         this.registerView(
             MEMEX_OBSIDIAN_VIEW_TYPE,
@@ -329,6 +587,14 @@ export default class MemexObsidianPlugin extends Plugin {
             callback: () => this.openCallbackUrlModal(),
         })
 
+        this.addCommand({
+            id: 'memex-run-pull-import',
+            name: 'Run Memex Pull Import',
+            callback: () => {
+                void this.runPullImportNow()
+            },
+        })
+
         this.registerEvent(
             this.app.workspace.on('editor-drop', (event, editor) => {
                 void this.handleEditorDrop(event, editor)
@@ -338,6 +604,12 @@ export default class MemexObsidianPlugin extends Plugin {
         this.registerEvent(
             this.app.workspace.on('css-change', () => {
                 this.syncObsidianTheme()
+            }),
+        )
+
+        this.registerEvent(
+            this.app.vault.on('rename', (file, oldPath) => {
+                void this.handlePullImportVaultRename(file, oldPath)
             }),
         )
 
@@ -390,7 +662,59 @@ export default class MemexObsidianPlugin extends Plugin {
         })
     }
 
+    private configurePullImportPolling(): void {
+        if (this.pullImportIntervalId != null) {
+            window.clearInterval(this.pullImportIntervalId)
+            this.pullImportIntervalId = null
+        }
+
+        if (!this.settings.pullImport.enabled) {
+            return
+        }
+
+        const intervalMs =
+            Math.max(1, this.settings.pullImport.pollIntervalMinutes) * 60_000
+        const intervalId = window.setInterval(() => {
+            void this.runPullImport({ silent: true })
+        }, intervalMs)
+
+        this.pullImportIntervalId = intervalId
+        this.registerInterval(intervalId)
+    }
+
+    private async runPullImport(params: { silent: boolean }) {
+        if (this.pullImportService == null) {
+            return null
+        }
+
+        try {
+            return await this.pullImportService.runOnce()
+        } catch (error) {
+            console.warn('[Memex Obsidian] Pull import failed', error)
+            if (!params.silent) {
+                throw error
+            }
+            return null
+        }
+    }
+
+    private async handlePullImportVaultRename(
+        file: TAbstractFile,
+        oldPath: string,
+    ): Promise<void> {
+        const didUpdate =
+            (await this.pullImportService?.handleVaultRename(file, oldPath)) ??
+            false
+        if (didUpdate) {
+            this.configurePullImportPolling()
+        }
+    }
+
     async onunload(): Promise<void> {
+        if (this.pullImportIntervalId != null) {
+            window.clearInterval(this.pullImportIntervalId)
+            this.pullImportIntervalId = null
+        }
         this.stopAuthSessionSync?.()
         this.stopAuthSessionSync = null
         this.sidebarSessionCache.dispose()
@@ -402,14 +726,83 @@ export default class MemexObsidianPlugin extends Plugin {
 
     async loadSettings(): Promise<void> {
         const loaded = await this.loadData()
-        this.settings = {
-            ...DEFAULT_SETTINGS,
-            ...(loaded ?? {}),
-        }
+        this.settings = normalizeMemexObsidianSettings(loaded)
     }
 
     async saveSettings(): Promise<void> {
         await this.saveData(this.settings)
+    }
+
+    async updatePullImportSettings(
+        pullImport: PullImportSettings,
+    ): Promise<void> {
+        const wasEnabled = this.settings.pullImport.enabled
+        this.settings = normalizeMemexObsidianSettings({
+            ...this.settings,
+            pullImport,
+        })
+        await this.saveSettings()
+        this.configurePullImportPolling()
+        if (!wasEnabled && this.settings.pullImport.enabled) {
+            void this.runPullImport({ silent: true })
+        }
+    }
+
+    async addPullImportRule(): Promise<void> {
+        await this.updatePullImportSettings({
+            ...this.settings.pullImport,
+            rules: [
+                ...this.settings.pullImport.rules,
+                createDefaultPullImportRule(),
+            ],
+        })
+    }
+
+    async removePullImportRule(ruleId: string): Promise<void> {
+        await this.updatePullImportSettings({
+            ...this.settings.pullImport,
+            rules: this.settings.pullImport.rules.filter(
+                (rule) => rule.id !== ruleId,
+            ),
+        })
+    }
+
+    async updatePullImportRule(
+        ruleId: string,
+        patch: Partial<PullImportRuleSettings>,
+    ): Promise<void> {
+        await this.updatePullImportSettings({
+            ...this.settings.pullImport,
+            rules: this.settings.pullImport.rules.map((rule) =>
+                rule.id === ruleId ? { ...rule, ...patch } : rule,
+            ),
+        })
+    }
+
+    async runPullImportNow(): Promise<void> {
+        try {
+            const result = await this.runPullImport({ silent: false })
+            if (result == null) {
+                return
+            }
+
+            if (result.initializedCursor) {
+                new Notice(
+                    'Memex pull imports will start with new items from now.',
+                )
+                return
+            }
+
+            new Notice(
+                `Memex pull import complete. Imported ${result.importedCount}, skipped ${result.skippedCount}.`,
+            )
+        } catch (error) {
+            new Notice(
+                error instanceof Error
+                    ? `Memex pull import failed: ${error.message}`
+                    : 'Memex pull import failed.',
+            )
+        }
     }
 
     async toggleSidebar(): Promise<void> {
