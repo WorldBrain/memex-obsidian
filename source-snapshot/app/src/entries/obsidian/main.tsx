@@ -40,9 +40,11 @@ import {
     type PullImportSettings,
 } from './pull-import-definitions'
 import {
+    ObsidianPullImportAuthRequiredError,
     ObsidianPullImportService,
     createDefaultPullImportRule,
     normalizeMemexObsidianSettings,
+    type PullImportRunResult,
 } from './pull-import-service'
 
 const OAUTH_PROTOCOL_ACTION = 'memex-auth'
@@ -640,12 +642,15 @@ export default class MemexObsidianPlugin extends Plugin {
     })
     private readonly sidebarSessionCache = new ObsidianSidebarSessionCache({
         runtime: this.runtime,
-        startLoginFlow: () => this.startLoginFlow(),
+        startLoginFlow: async () => {
+            await this.startLoginFlow()
+        },
     })
     private authSessionPersistence: ObsidianAuthSessionPersistence | null = null
     private stopAuthSessionSync: (() => void) | null = null
     private pullImportService: ObsidianPullImportService | null = null
     private pullImportIntervalId: number | null = null
+    private isPullImportLoginFlowOpen = false
 
     private resolveRuntimeUrl(path: string): string | null {
         const adapter = this.app.vault?.adapter
@@ -810,19 +815,66 @@ export default class MemexObsidianPlugin extends Plugin {
         this.registerInterval(intervalId)
     }
 
-    private async runPullImport(params: { silent: boolean }) {
+    private async runPullImport(params: {
+        silent: boolean
+    }): Promise<PullImportRunResult | null> {
         if (this.pullImportService == null) {
             return null
         }
 
         try {
+            if (!(await this.hasMemexAuthSessionForPullImport())) {
+                await this.handlePullImportAuthRequired(params)
+                return null
+            }
+
             return await this.pullImportService.runOnce()
         } catch (error) {
+            if (error instanceof ObsidianPullImportAuthRequiredError) {
+                await this.handlePullImportAuthRequired(params)
+                return null
+            }
+
             console.warn('[Memex Obsidian] Pull import failed', error)
             if (!params.silent) {
                 throw error
             }
             return null
+        }
+    }
+
+    private async hasMemexAuthSessionForPullImport(): Promise<boolean> {
+        const { data, error } = await getSupabaseClient().auth.getSession()
+        if (error != null) {
+            console.warn(
+                '[Memex Obsidian] Could not read auth session before pull import.',
+                error,
+            )
+            return true
+        }
+
+        return data.session != null
+    }
+
+    private async handlePullImportAuthRequired(params: {
+        silent: boolean
+    }): Promise<void> {
+        if (this.isPullImportLoginFlowOpen) {
+            if (!params.silent) {
+                new Notice(
+                    'You are not logged in to Memex. Complete the open login flow to continue Obsidian pull imports.',
+                )
+            }
+            return
+        }
+
+        this.isPullImportLoginFlowOpen = true
+        const didOpenLogin = await this.startLoginFlow({
+            successNotice:
+                'You are not logged in to Memex. Opening login to continue Obsidian pull imports.',
+        })
+        if (!didOpenLogin) {
+            this.isPullImportLoginFlowOpen = false
         }
     }
 
@@ -999,22 +1051,28 @@ export default class MemexObsidianPlugin extends Plugin {
         sidebarView.openSearchNotes(params)
     }
 
-    async startLoginFlow(): Promise<void> {
+    async startLoginFlow(
+        options: { successNotice?: string } = {},
+    ): Promise<boolean> {
         try {
             const authUrl = await this.runtime.startOAuthLogin()
             if (!authUrl) {
                 new Notice('Could not generate Memex login URL.')
-                return
+                return false
             }
 
             window.open(authUrl, '_blank', 'noopener,noreferrer')
-            new Notice('Opened Memex login in your browser.')
+            new Notice(
+                options.successNotice ?? 'Opened Memex login in your browser.',
+            )
+            return true
         } catch (error) {
             new Notice(
                 error instanceof Error
                     ? `Memex login failed: ${error.message}`
                     : 'Memex login failed.',
             )
+            return false
         }
     }
 
@@ -1050,6 +1108,8 @@ export default class MemexObsidianPlugin extends Plugin {
                     ? `OAuth callback failed: ${error.message}`
                     : 'OAuth callback failed.',
             )
+        } finally {
+            this.isPullImportLoginFlowOpen = false
         }
     }
 

@@ -58,6 +58,8 @@ const COMMON_PLACEHOLDERS: TemplatePlaceholderDefinition[] = [
     { path: 'import_updated_at', label: 'RPC import cursor update time' },
     { path: 'rule_id', label: 'Matched Obsidian import rule ID' },
     { path: 'rule_order', label: 'Matched Obsidian import rule order' },
+    { path: 'published', label: 'Published date' },
+    { path: 'tags', label: 'Memex tags' },
     { path: 'tag_ids', label: 'Memex tag IDs' },
 ]
 
@@ -116,6 +118,7 @@ export const DEFAULT_SETTINGS: MemexObsidianSettings = {
 export const OBSIDIAN_IMPORT_CONTENT_TYPE_DEFINITIONS: ImportContentTypeDefinition[] =
     [
         defineContentType('web', 'Web page', WEB_PLACEHOLDERS),
+        defineContentType('substack', 'Substack post', WEB_PLACEHOLDERS),
         defineContentType('pdf', 'PDF', [
             { path: 'title', label: 'Title' },
             { path: 'url', label: 'Source URL' },
@@ -126,6 +129,14 @@ export const OBSIDIAN_IMPORT_CONTENT_TYPE_DEFINITIONS: ImportContentTypeDefiniti
             { path: 'source_urls', label: 'Known source URLs' },
         ]),
         defineContentType('youtube', 'YouTube video', [
+            { path: 'title', label: 'Title' },
+            { path: 'description', label: 'Description' },
+            { path: 'published_at', label: 'Published time in milliseconds' },
+            { path: 'channel_title', label: 'Channel title' },
+            { path: 'channel_id', label: 'Channel ID' },
+            { path: 'media', label: 'Video media metadata' },
+        ]),
+        defineContentType('youtubeShorts', 'YouTube Short', [
             { path: 'title', label: 'Title' },
             { path: 'description', label: 'Description' },
             { path: 'published_at', label: 'Published time in milliseconds' },
@@ -171,6 +182,13 @@ export const OBSIDIAN_IMPORT_CONTENT_TYPE_DEFINITIONS: ImportContentTypeDefiniti
         defineContentType('linkedin', 'LinkedIn post', [
             { path: 'text', label: 'Post text' },
         ]),
+        defineContentType('linkedinProfile', 'LinkedIn profile', [
+            { path: 'title', label: 'Profile title' },
+            { path: 'description', label: 'Profile description' },
+            { path: 'author_name', label: 'Profile name' },
+            { path: 'author_handle', label: 'Profile handle' },
+            { path: 'url', label: 'Profile URL' },
+        ]),
         defineContentType('pinterest', 'Pinterest item', SOCIAL_PLACEHOLDERS),
         defineContentType('reddit', 'Reddit post', [
             { path: 'title', label: 'Title' },
@@ -214,9 +232,10 @@ export const OBSIDIAN_IMPORT_CONTENT_TYPE_DEFINITIONS: ImportContentTypeDefiniti
             { path: 'title', label: 'Title' },
             { path: 'description', label: 'Description' },
             { path: 'duration', label: 'Duration' },
+            { path: 'summary', label: 'Summary' },
+            { path: 'transcript', label: 'Transcript' },
             { path: 'media', label: 'Audio media metadata' },
             { path: 'transcript_status', label: 'Transcript status' },
-            { path: 'summary', label: 'Summary' },
             { path: 'summary_markdown', label: 'AI summary response Markdown' },
             { path: 'transcript_markdown', label: 'Transcript Markdown' },
         ]),

@@ -21,14 +21,32 @@ import {
     type ObsidianImportContentType,
     type PullImportRuleSettings,
     type PullImportSettings,
+    type TemplatePlaceholderDefinition,
 } from './pull-import-definitions'
 
 const MAX_POLL_INTERVAL_MINUTES = 24 * 60
 const DEFAULT_POLL_LIMIT = 50
 const TEMPLATE_PLACEHOLDER_PATTERN = /{{\s*metadata\.([a-zA-Z0-9_.-]+)\s*}}/g
 const ANNOTATIONS_SECTION_HEADING = '## Annotations'
+const AUTH_REQUIRED_MESSAGE =
+    'You are not logged in to Memex. Log in to continue Obsidian pull imports.'
 
 type UnknownRecord = Record<string, unknown>
+
+type SupabaseRpcErrorLike = {
+    code?: unknown
+    message?: unknown
+}
+
+export class ObsidianPullImportAuthRequiredError extends Error {
+    readonly originalError?: unknown
+
+    constructor(originalError?: unknown) {
+        super(AUTH_REQUIRED_MESSAGE)
+        this.name = 'ObsidianPullImportAuthRequiredError'
+        this.originalError = originalError
+    }
+}
 
 export interface ObsidianPullImportRpcRule {
     ruleId: string
@@ -253,13 +271,11 @@ export class ObsidianPullImportService {
             const existingTemplate =
                 this.app.vault.getAbstractFileByPath(templatePath)
             if (existingTemplate != null) {
-                if (
-                    definition.type === 'audioRecording' &&
-                    isVaultMarkdownFile(this.app.vault, existingTemplate)
-                ) {
-                    await this.upgradeLegacyAudioRecordingTemplate(
-                        existingTemplate,
-                    )
+                if (isVaultMarkdownFile(this.app.vault, existingTemplate)) {
+                    await this.upgradeGeneratedDefaultTemplate({
+                        templateFile: existingTemplate,
+                        contentType: definition.type,
+                    })
                 }
                 continue
             }
@@ -271,19 +287,20 @@ export class ObsidianPullImportService {
         }
     }
 
-    private async upgradeLegacyAudioRecordingTemplate(
-        templateFile: TFile,
-    ): Promise<void> {
-        const currentTemplate = await this.app.vault.read(templateFile)
-        if (
-            currentTemplate.trim() !==
-            buildLegacyAudioRecordingDefaultTemplate().trim()
-        ) {
+    private async upgradeGeneratedDefaultTemplate(params: {
+        templateFile: TFile
+        contentType: ObsidianImportContentType
+    }): Promise<void> {
+        const currentTemplate = await this.app.vault.read(params.templateFile)
+        const generatedTemplatesToUpgrade =
+            getGeneratedDefaultTemplatesToUpgrade(params.contentType)
+
+        if (!generatedTemplatesToUpgrade.includes(currentTemplate.trim())) {
             return
         }
 
-        await this.app.vault.process(templateFile, () =>
-            buildDefaultTemplate('audioRecording'),
+        await this.app.vault.process(params.templateFile, () =>
+            buildDefaultTemplate(params.contentType),
         )
     }
 
@@ -334,6 +351,9 @@ export class ObsidianPullImportService {
         )
 
         if (error != null) {
+            if (isPullImportAuthRequiredRpcError(error)) {
+                throw new ObsidianPullImportAuthRequiredError(error)
+            }
             throw error
         }
 
@@ -398,7 +418,15 @@ export class ObsidianPullImportService {
     private async getTemplateMetadata(
         item: ObsidianPullImportRpcItem,
     ): Promise<UnknownRecord> {
-        const metadata = getTemplateMetadata(item)
+        const baseMetadata = getTemplateMetadata(item)
+        const tagNames = await this.loadTemplateTagNames(baseMetadata)
+        const metadata = {
+            ...baseMetadata,
+            published: formatTimestampText(baseMetadata.published_at),
+            tags: tagNames,
+            tag_names: tagNames,
+        }
+
         if (item.content_type !== 'audioRecording') {
             return metadata
         }
@@ -412,13 +440,60 @@ export class ObsidianPullImportService {
             )
         }
 
+        const summaryMarkdown =
+            await this.loadAudioRecordingSummaryMarkdown(fullMetadata)
+        const transcriptMarkdown =
+            buildAudioRecordingTranscriptMarkdown(fullMetadata)
+
         return {
+            ...fullMetadata,
             ...metadata,
-            summary_markdown:
-                await this.loadAudioRecordingSummaryMarkdown(fullMetadata),
-            transcript_markdown:
-                buildAudioRecordingTranscriptMarkdown(fullMetadata),
+            duration: getAudioRecordingDurationText(fullMetadata),
+            summary: summaryMarkdown,
+            summary_markdown: summaryMarkdown,
+            transcript: transcriptMarkdown,
+            transcript_markdown: transcriptMarkdown,
         }
+    }
+
+    private async loadTemplateTagNames(
+        metadata: UnknownRecord,
+    ): Promise<string[]> {
+        const existingTagNames = normalizeStringArray(metadata.tags)
+        if (existingTagNames.length > 0) {
+            return existingTagNames
+        }
+
+        const tagIds = normalizeStringArray(metadata.tag_ids)
+        if (tagIds.length === 0) {
+            return []
+        }
+
+        const { data, error } = await this.supabaseClient
+            .from('user_tags')
+            .select('id,name')
+            .in('id', tagIds)
+
+        if (error != null) {
+            throw error
+        }
+
+        const tagNamesById = new Map<string, string>()
+        for (const row of Array.isArray(data) ? data : []) {
+            if (!isRecord(row)) {
+                continue
+            }
+
+            const id = normalizeString(row.id, '')
+            const name = normalizeString(row.name, '')
+            if (id && name) {
+                tagNamesById.set(id, name)
+            }
+        }
+
+        return tagIds
+            .map((tagId) => tagNamesById.get(tagId) ?? '')
+            .filter(Boolean)
     }
 
     private async loadAudioRecordingSummaryMarkdown(
@@ -426,7 +501,7 @@ export class ObsidianPullImportService {
     ): Promise<string> {
         const summaryThreadId = getAudioRecordingSummaryThreadId(audioMetadata)
         if (summaryThreadId == null) {
-            return ''
+            return getAudioRecordingInlineSummaryText(audioMetadata)
         }
 
         const summaryThreadMetadata =
@@ -440,7 +515,7 @@ export class ObsidianPullImportService {
         return (
             getLatestAssistantMessageMarkdown(
                 getChatThreadMessages(summaryThreadMetadata),
-            ) ?? ''
+            ) ?? getAudioRecordingInlineSummaryText(audioMetadata)
         )
     }
 
@@ -570,41 +645,367 @@ export function createDefaultPullImportRule(
 export function buildDefaultTemplate(
     contentType: ObsidianImportContentType,
 ): string {
+    return buildContentFirstDefaultTemplate(contentType)
+}
+
+function getGeneratedDefaultTemplatesToUpgrade(
+    contentType: ObsidianImportContentType,
+): string[] {
+    const templates = [buildLegacyDefaultTemplate(contentType).trim()]
+
     if (contentType === 'audioRecording') {
-        return buildAudioRecordingDefaultTemplate()
+        templates.push(
+            buildLegacyAudioRecordingDefaultTemplate().trim(),
+            buildMetadataDumpAudioRecordingDefaultTemplate().trim(),
+        )
     }
 
-    return buildLegacyDefaultTemplate(contentType)
+    return [...new Set(templates)]
+}
+
+function buildContentFirstDefaultTemplate(
+    contentType: ObsidianImportContentType,
+): string {
+    switch (contentType) {
+        case 'web':
+        case 'substack':
+        case 'chatgpt':
+        case 'claude':
+            return buildTemplate([
+                '# {{metadata.title}}',
+                '',
+                'Source: {{metadata.url}}',
+                'Author: {{metadata.author}}',
+                'Published: {{metadata.published}}',
+                'Tags: {{metadata.tags}}',
+                '',
+                '## Summary',
+                '',
+                '{{metadata.summary}}',
+                '',
+                '## Description',
+                '',
+                '{{metadata.description}}',
+            ])
+        case 'pdf':
+            return buildTemplate([
+                '# {{metadata.title}}',
+                '',
+                'Source: {{metadata.url}}',
+                'Authors: {{metadata.authors}}',
+                'Published: {{metadata.published}}',
+                'Pages: {{metadata.page_count}}',
+                'Tags: {{metadata.tags}}',
+                '',
+                '## Abstract',
+                '',
+                '{{metadata.abstract}}',
+                '',
+                '## Known Sources',
+                '',
+                '{{metadata.source_urls}}',
+            ])
+        case 'youtube':
+        case 'youtubeShorts':
+            return buildTemplate([
+                '# {{metadata.title}}',
+                '',
+                'Source: {{metadata.url}}',
+                'Channel: {{metadata.channel_title}}',
+                'Published: {{metadata.published}}',
+                'Tags: {{metadata.tags}}',
+                '',
+                '## Summary',
+                '',
+                '{{metadata.summary}}',
+                '',
+                '## Description',
+                '',
+                '{{metadata.description}}',
+            ])
+        case 'twitter':
+            return buildTemplate([
+                '# {{metadata.author_name}}',
+                '',
+                'Source: {{metadata.url}}',
+                'Author: {{metadata.author_name}} {{metadata.author_handle}}',
+                'Published: {{metadata.published}}',
+                'Tags: {{metadata.tags}}',
+                '',
+                '## Post',
+                '',
+                '{{metadata.text}}',
+                '',
+                '## Quoted Post',
+                '',
+                '{{metadata.quote_tweet}}',
+            ])
+        case 'rssFeed':
+            return buildTemplate([
+                '# {{metadata.title}}',
+                '',
+                'Feed: {{metadata.feed_url}}',
+                'Site: {{metadata.site_url}}',
+                'Author: {{metadata.author_name}}',
+                'Platform: {{metadata.source_platform}}',
+                'Tags: {{metadata.tags}}',
+                '',
+                '## Description',
+                '',
+                '{{metadata.description}}',
+            ])
+        case 'instagram':
+        case 'pinterest':
+        case 'snapchat':
+            return buildTemplate([
+                '# {{metadata.title}}',
+                '',
+                'Source: {{metadata.url}}',
+                'Author: {{metadata.author_name}} {{metadata.author_handle}}',
+                'Published: {{metadata.published}}',
+                'Tags: {{metadata.tags}}',
+                '',
+                '## Text',
+                '',
+                '{{metadata.text}}',
+                '',
+                '## Description',
+                '',
+                '{{metadata.description}}',
+            ])
+        case 'tiktok':
+            return buildTemplate([
+                '# {{metadata.author.nickname}}',
+                '',
+                'Source: {{metadata.url}}',
+                'Author: {{metadata.author.nickname}} {{metadata.author.uniqueId}}',
+                'Published: {{metadata.published}}',
+                'Tags: {{metadata.tags}}',
+                '',
+                '## Description',
+                '',
+                '{{metadata.description}}',
+            ])
+        case 'facebook':
+            return buildTemplate([
+                '# {{metadata.author_name}}',
+                '',
+                'Source: {{metadata.url}}',
+                'Author: {{metadata.author_name}} {{metadata.author_handle}}',
+                'Published: {{metadata.published}}',
+                'Tags: {{metadata.tags}}',
+                '',
+                '## Post',
+                '',
+                '{{metadata.text}}',
+            ])
+        case 'linkedin':
+            return buildTemplate([
+                '# LinkedIn post',
+                '',
+                'Source: {{metadata.url}}',
+                'Author: {{metadata.author_name}} {{metadata.author_handle}}',
+                'Published: {{metadata.published}}',
+                'Tags: {{metadata.tags}}',
+                '',
+                '## Post',
+                '',
+                '{{metadata.text}}',
+            ])
+        case 'linkedinProfile':
+            return buildTemplate([
+                '# {{metadata.author_name}}',
+                '',
+                'Source: {{metadata.url}}',
+                'Handle: {{metadata.author_handle}}',
+                'Tags: {{metadata.tags}}',
+                '',
+                '## Description',
+                '',
+                '{{metadata.description}}',
+            ])
+        case 'reddit':
+            return buildTemplate([
+                '# {{metadata.title}}',
+                '',
+                'Source: {{metadata.url}}',
+                'Subreddit: {{metadata.subreddit_name}}',
+                'Author: {{metadata.author_name}} {{metadata.author_handle}}',
+                'Score: {{metadata.score}}',
+                'Published: {{metadata.published}}',
+                'Tags: {{metadata.tags}}',
+                '',
+                '## Post',
+                '',
+                '{{metadata.text}}',
+            ])
+        case 'annotation':
+            return buildTemplate([
+                '# {{metadata.target_entity.title}}',
+                '',
+                'Source: {{metadata.target_entity.url}}',
+                'Tags: {{metadata.tags}}',
+                '',
+                '## Annotation',
+                '',
+                '{{metadata.text}}',
+            ])
+        case 'image':
+            return buildTemplate([
+                '# {{metadata.source_title}}',
+                '',
+                'Source: {{metadata.source_url}}',
+                'Image: {{metadata.original_url}}',
+                'MIME type: {{metadata.mime_type}}',
+                'Tags: {{metadata.tags}}',
+                '',
+                '## Description',
+                '',
+                '{{metadata.description}}',
+            ])
+        case 'transcribedMedia':
+            return buildTemplate([
+                '# {{metadata.title}}',
+                '',
+                'Source: {{metadata.url}}',
+                'Tags: {{metadata.tags}}',
+                '',
+                '## Summary',
+                '',
+                '{{metadata.summary}}',
+                '',
+                '## Description',
+                '',
+                '{{metadata.description}}',
+            ])
+        case 'audioRecording':
+            return buildTemplate([
+                '# {{metadata.title}}',
+                '',
+                'Duration: {{metadata.duration}}',
+                'Tags: {{metadata.tags}}',
+                '',
+                '## Summary',
+                '',
+                '{{metadata.summary}}',
+                '',
+                '## Transcript',
+                '',
+                '{{metadata.transcript}}',
+            ])
+        case 'chatThread':
+            return buildTemplate([
+                '# {{metadata.title}}',
+                '',
+                'Model: {{metadata.model_name}}',
+                'Tags: {{metadata.tags}}',
+                '',
+                '## Summary',
+                '',
+                '{{metadata.summary}}',
+            ])
+        case 'twitterProfile':
+            return buildTemplate([
+                '# {{metadata.author_name}}',
+                '',
+                'Handle: {{metadata.author_handle}}',
+                'Tags: {{metadata.tags}}',
+                '',
+                '## Description',
+                '',
+                '{{metadata.description}}',
+                '',
+                '## Links',
+                '',
+                '{{metadata.bio_links}}',
+            ])
+        case 'subreddit':
+            return buildTemplate([
+                '# {{metadata.title}}',
+                '',
+                'Display name: {{metadata.display_name}}',
+                'Tags: {{metadata.tags}}',
+                '',
+                '## Description',
+                '',
+                '{{metadata.description}}',
+            ])
+        case 'youtubeChannel':
+            return buildTemplate([
+                '# {{metadata.title}}',
+                '',
+                'Handle: {{metadata.channel_handle}}',
+                'Tags: {{metadata.tags}}',
+                '',
+                '## Description',
+                '',
+                '{{metadata.description}}',
+            ])
+        case 'book':
+            return buildTemplate([
+                '# {{metadata.title}}',
+                '',
+                'Subtitle: {{metadata.subtitle}}',
+                'Authors: {{metadata.authors}}',
+                'Publisher: {{metadata.publisher}}',
+                'Published: {{metadata.published}}',
+                'Pages: {{metadata.page_count}}',
+                'Language: {{metadata.language}}',
+                'Categories: {{metadata.categories}}',
+                'Tags: {{metadata.tags}}',
+                '',
+                '## Description',
+                '',
+                '{{metadata.description}}',
+            ])
+        case 'audiobook':
+            return buildTemplate([
+                '# {{metadata.title}}',
+                '',
+                'Subtitle: {{metadata.subtitle}}',
+                'Authors: {{metadata.authors}}',
+                'Narrators: {{metadata.narrators}}',
+                'Publisher: {{metadata.publisher}}',
+                'Published: {{metadata.published}}',
+                'Language: {{metadata.language}}',
+                'Categories: {{metadata.categories}}',
+                'Tags: {{metadata.tags}}',
+                '',
+                '## Description',
+                '',
+                '{{metadata.description}}',
+            ])
+        default:
+            return buildFallbackContentFirstDefaultTemplate(contentType)
+    }
+}
+
+function buildFallbackContentFirstDefaultTemplate(
+    contentType: ObsidianImportContentType,
+): string {
+    const titlePlaceholder = getPreferredTitlePlaceholder(contentType)
+    return buildTemplate([
+        `# {{metadata.${titlePlaceholder}}}`,
+        '',
+        'Source: {{metadata.url}}',
+        'Tags: {{metadata.tags}}',
+        '',
+        '## Summary',
+        '',
+        '{{metadata.summary}}',
+        '',
+        '## Content',
+        '',
+        '{{metadata.text}}',
+        '',
+        '{{metadata.description}}',
+    ])
 }
 
 function buildLegacyDefaultTemplate(
     contentType: ObsidianImportContentType,
 ): string {
-    const definition =
-        OBSIDIAN_IMPORT_CONTENT_TYPE_DEFINITION_BY_TYPE.get(contentType)
-    return buildGenericDefaultTemplate(
-        contentType,
-        definition?.placeholders ?? [],
-    )
-}
-
-function buildLegacyAudioRecordingDefaultTemplate(): string {
-    const definition =
-        OBSIDIAN_IMPORT_CONTENT_TYPE_DEFINITION_BY_TYPE.get('audioRecording')
-    return buildGenericDefaultTemplate(
-        'audioRecording',
-        (definition?.placeholders ?? []).filter(
-            (placeholder) =>
-                placeholder.path !== 'summary_markdown' &&
-                placeholder.path !== 'transcript_markdown',
-        ),
-    )
-}
-
-function buildGenericDefaultTemplate(
-    contentType: ObsidianImportContentType,
-    placeholders: Array<{ label: string; path: string }>,
-): string {
+    const placeholders = getLegacyDefaultTemplatePlaceholders(contentType)
     const titlePlaceholder = getPreferredTitlePlaceholder(contentType)
     const placeholderLines = placeholders
         .map(
@@ -644,43 +1045,41 @@ function buildGenericDefaultTemplate(
     ].join('\n')
 }
 
-function buildAudioRecordingDefaultTemplate(): string {
-    const definition =
-        OBSIDIAN_IMPORT_CONTENT_TYPE_DEFINITION_BY_TYPE.get('audioRecording')
-    const placeholderLines = (definition?.placeholders ?? [])
-        .map(
-            (placeholder) =>
-                `- ${placeholder.label}: {{metadata.${placeholder.path}}}`,
-        )
-        .join('\n')
+function getLegacyDefaultTemplatePlaceholders(
+    contentType: ObsidianImportContentType,
+): TemplatePlaceholderDefinition[] {
+    if (
+        contentType === 'substack' ||
+        contentType === 'youtubeShorts' ||
+        contentType === 'linkedinProfile'
+    ) {
+        return []
+    }
 
-    return [
-        '---',
-        'memex_id: "{{metadata.id}}"',
-        'memex_content_id: "{{metadata.content_id}}"',
-        'memex_library_id: "{{metadata.library_id}}"',
-        'memex_type: "{{metadata.type}}"',
-        'memex_external_id: "{{metadata.external_id}}"',
-        'memex_updated_at: "{{metadata.updated_at}}"',
-        '---',
+    const definition =
+        OBSIDIAN_IMPORT_CONTENT_TYPE_DEFINITION_BY_TYPE.get(contentType)
+
+    return (definition?.placeholders ?? []).filter(
+        (placeholder) =>
+            placeholder.path !== 'published' &&
+            placeholder.path !== 'tags' &&
+            placeholder.path !== 'transcript',
+    )
+}
+
+function buildLegacyAudioRecordingDefaultTemplate(): string {
+    return buildLegacyDefaultTemplate('audioRecording').replace(
+        '- AI summary response Markdown: {{metadata.summary_markdown}}\n- Transcript Markdown: {{metadata.transcript_markdown}}\n',
         '',
-        '<!-- memex-content-id: {{metadata.content_id}} -->',
-        '',
-        '# {{metadata.title}}',
-        '',
-        '## AI Summary',
-        '',
-        '{{metadata.summary_markdown}}',
-        '',
-        '## Transcript',
-        '',
-        '{{metadata.transcript_markdown}}',
-        '',
-        '## Metadata',
-        '',
-        placeholderLines,
-        '',
-    ].join('\n')
+    )
+}
+
+function buildMetadataDumpAudioRecordingDefaultTemplate(): string {
+    return buildLegacyDefaultTemplate('audioRecording')
+}
+
+function buildTemplate(lines: string[]): string {
+    return [...lines, ''].join('\n')
 }
 
 export function renderTemplate(
@@ -768,6 +1167,67 @@ function buildAudioRecordingTranscriptMarkdown(
         })
         .filter(Boolean)
         .join('\n\n')
+}
+
+function getAudioRecordingDurationText(metadata: UnknownRecord): string {
+    const durationSeconds = getAudioRecordingDurationSeconds(metadata)
+    return durationSeconds == null ? '' : formatSecondsToHHMMSS(durationSeconds)
+}
+
+function getAudioRecordingDurationSeconds(
+    metadata: UnknownRecord,
+): number | null {
+    const audioEntry = getPrimaryAudioEntry(metadata)
+    const audioDuration = normalizeFiniteNumber(audioEntry?.duration)
+    if (audioDuration != null) {
+        return audioDuration
+    }
+
+    if (!Array.isArray(metadata.takes)) {
+        return null
+    }
+
+    const takeEnds = metadata.takes
+        .filter(isRecord)
+        .map((take) => {
+            const start = normalizeFiniteNumber(take.start_offset_seconds) ?? 0
+            const duration = normalizeFiniteNumber(take.duration) ?? 0
+            return start + duration
+        })
+        .filter((value) => value > 0)
+
+    if (takeEnds.length === 0) {
+        return null
+    }
+
+    return Math.max(...takeEnds)
+}
+
+function getAudioRecordingInlineSummaryText(metadata: UnknownRecord): string {
+    const summary = normalizeString(metadata.summary, '')
+    if (summary && !isUuidString(summary)) {
+        return summary
+    }
+
+    const audioEntry = getPrimaryAudioEntry(metadata)
+    const audioSummary = audioEntry?.summary
+    if (!isRecord(audioSummary)) {
+        return ''
+    }
+
+    const englishSummary = normalizeString(audioSummary.en, '')
+    if (englishSummary) {
+        return englishSummary
+    }
+
+    for (const value of Object.values(audioSummary)) {
+        const normalizedValue = normalizeString(value, '')
+        if (normalizedValue) {
+            return normalizedValue
+        }
+    }
+
+    return ''
 }
 
 function getPrimaryAudioEntry(metadata: UnknownRecord): UnknownRecord | null {
@@ -1105,6 +1565,49 @@ function normalizeString(rawValue: unknown, fallback: string): string {
     return typeof rawValue === 'string' ? rawValue.trim() : fallback
 }
 
+function normalizeStringArray(rawValue: unknown): string[] {
+    const values = Array.isArray(rawValue) ? rawValue : [rawValue]
+    return [
+        ...new Set(
+            values.map((value) => normalizeString(value, '')).filter(Boolean),
+        ),
+    ]
+}
+
+function normalizeFiniteNumber(rawValue: unknown): number | null {
+    const numericValue =
+        typeof rawValue === 'number'
+            ? rawValue
+            : typeof rawValue === 'string'
+              ? Number(rawValue)
+              : Number.NaN
+
+    return Number.isFinite(numericValue) && numericValue >= 0
+        ? numericValue
+        : null
+}
+
+function formatTimestampText(rawValue: unknown): string {
+    const timestamp =
+        typeof rawValue === 'number'
+            ? rawValue
+            : typeof rawValue === 'string' && rawValue.trim()
+              ? Number(rawValue)
+              : Number.NaN
+    const date =
+        Number.isFinite(timestamp) && timestamp > 0
+            ? new Date(timestamp)
+            : typeof rawValue === 'string'
+              ? new Date(rawValue)
+              : null
+
+    if (date == null || Number.isNaN(date.getTime())) {
+        return ''
+    }
+
+    return date.toISOString().slice(0, 10)
+}
+
 function isUuidString(value: string): boolean {
     return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
         value.trim(),
@@ -1183,6 +1686,30 @@ function parseRpcItem(rawItem: unknown): ObsidianPullImportRpcItem | null {
         updated_at: rawItem.updated_at,
         metadata: isRecord(rawItem.metadata) ? rawItem.metadata : {},
     }
+}
+
+function isPullImportAuthRequiredRpcError(error: unknown): boolean {
+    if (!isSupabaseRpcErrorLike(error)) {
+        return false
+    }
+
+    const code = typeof error.code === 'string' ? error.code : ''
+    const message = typeof error.message === 'string' ? error.message : ''
+
+    return (
+        code === '28000' ||
+        message.includes(
+            'memex_poll_obsidian_imports requires an authenticated user',
+        ) ||
+        (code === '42501' &&
+            message.includes(
+                'permission denied for function memex_poll_obsidian_imports',
+            ))
+    )
+}
+
+function isSupabaseRpcErrorLike(error: unknown): error is SupabaseRpcErrorLike {
+    return typeof error === 'object' && error != null
 }
 
 function stringifyPlaceholderValue(
