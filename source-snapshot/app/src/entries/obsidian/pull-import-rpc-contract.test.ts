@@ -6,7 +6,6 @@ const appRoot = (process as unknown as { cwd: () => string }).cwd()
 const migrationSql = readFileSync(
     resolve(
         appRoot,
-        '..',
         'supabase',
         'migrations',
         '20260620120000_memex_obsidian_pull_imports_rpc.sql',
