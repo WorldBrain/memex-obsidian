@@ -1204,7 +1204,10 @@ function getAudioRecordingDurationSeconds(
 }
 
 function getAudioRecordingInlineSummaryText(metadata: UnknownRecord): string {
-    const summary = normalizeString(metadata.summary, '')
+    const summary =
+        typeof metadata.summary === 'string'
+            ? normalizeString(metadata.summary, '')
+            : ''
     if (summary && !isUuidString(summary)) {
         return summary
     }
@@ -1322,7 +1325,22 @@ function formatTranscriptTimestamp(rawOffset: unknown): string {
 function getAudioRecordingSummaryThreadId(
     metadata: UnknownRecord,
 ): string | null {
-    const summary = normalizeString(metadata.summary, '')
+    if (Array.isArray(metadata.summary)) {
+        for (const reference of metadata.summary) {
+            if (!isRecord(reference)) {
+                continue
+            }
+            const threadId = normalizeString(reference.threadId, '')
+            if (isUuidString(threadId)) {
+                return threadId
+            }
+        }
+    }
+
+    const summary =
+        typeof metadata.summary === 'string'
+            ? normalizeString(metadata.summary, '')
+            : ''
     return isUuidString(summary) ? summary : null
 }
 
