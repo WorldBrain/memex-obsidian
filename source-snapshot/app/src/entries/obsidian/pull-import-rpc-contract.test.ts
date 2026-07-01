@@ -2,10 +2,13 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-const appRoot = (process as unknown as { cwd: () => string }).cwd()
+const repoRoot = resolve(
+    (process as unknown as { cwd: () => string }).cwd(),
+    '..',
+)
 const migrationSql = readFileSync(
     resolve(
-        appRoot,
+        repoRoot,
         'supabase',
         'migrations',
         '20260620120000_memex_obsidian_pull_imports_rpc.sql',
