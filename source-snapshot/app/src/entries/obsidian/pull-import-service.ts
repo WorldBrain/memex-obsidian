@@ -3,9 +3,10 @@ import type {
     CommonSupabaseClient,
 } from '@memex/common/storage/supabase-types'
 import type { ChatMessageEntity } from '@memex/common/features/page-interactions/types'
+import { isChatMessageEntity } from '@memex/common/features/ai-chat/utils/chat-thread-messages'
 import { formatSecondsToHHMMSS } from '@memex/common/utils/format-time'
 import type { App, TAbstractFile, TFile, Vault } from 'obsidian'
-import { getLatestAssistantMessageMarkdown } from '~/features/ai-chat/utils/assistant-message-markdown'
+import { getLatestAssistantMessageMarkdown } from '~/features/agent-chat/utils/assistant-message-markdown'
 import {
     DEFAULT_MEMEX_IMPORTS_FOLDER,
     DEFAULT_MEMEX_PLUGIN_FOLDER,
@@ -1344,13 +1345,9 @@ function getAudioRecordingSummaryThreadId(
     return isUuidString(summary) ? summary : null
 }
 
-function getChatThreadMessages(
-    metadata: UnknownRecord,
-): Array<Pick<ChatMessageEntity, 'llmMessage'>> {
+function getChatThreadMessages(metadata: UnknownRecord): ChatMessageEntity[] {
     return Array.isArray(metadata.messages)
-        ? (metadata.messages.filter(isRecord) as Array<
-              Pick<ChatMessageEntity, 'llmMessage'>
-          >)
+        ? metadata.messages.filter(isChatMessageEntity)
         : []
 }
 
