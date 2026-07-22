@@ -13342,6 +13342,12 @@ Please report this to https://github.com/markedjs/marked.`,e){let e=`<p>An error
   }
 
   button,
+  [role='button'] {
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  button,
   input,
   select,
   textarea {
