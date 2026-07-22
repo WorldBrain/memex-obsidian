@@ -1066,11 +1066,9 @@ When processing a refinement, perform the following tasks:
     transition: ${({theme:e})=>e.components.menuRow.transition};
 
     ${({$touchMode:e,$disabled:t,theme:n})=>e?null:M`
-                  html[data-memex-hover-interactions] & {
-                      &:hover {
-                          background: ${t?n.components.menuRow.states.default.background:n.components.menuRow.states.hover.background};
-                          color: ${t?n.components.menuRow.states.default.color:n.components.menuRow.states.hover.color};
-                      }
+                  &:hover {
+                      background: ${t?n.components.menuRow.states.default.background:n.components.menuRow.states.hover.background};
+                      color: ${t?n.components.menuRow.states.default.color:n.components.menuRow.states.hover.color};
                   }
               `}
 
@@ -1081,26 +1079,24 @@ When processing a refinement, perform the following tasks:
     }
 
     ${({$touchMode:e,$hideTrailingOnHover:t})=>e?null:M`
-                  html[data-memex-hover-interactions] & {
-                      &:hover ${mC}, &:focus-within ${mC} {
-                          opacity: 1;
-                          visibility: visible;
-                          pointer-events: auto;
-                      }
+                  &:hover ${mC}, &:focus-within ${mC} {
+                      opacity: 1;
+                      visibility: visible;
+                      pointer-events: auto;
+                  }
 
-                      &:hover ${hC} {
-                          opacity: 1;
-                          visibility: visible;
-                          pointer-events: auto;
-                      }
+                  &:hover ${hC} {
+                      opacity: 1;
+                      visibility: visible;
+                      pointer-events: auto;
+                  }
 
-                      &:hover
-                          ${pC},
-                          &:focus-within
-                          ${pC} {
-                          opacity: ${+!t};
-                          pointer-events: ${t?`none`:`auto`};
-                      }
+                  &:hover
+                      ${pC},
+                      &:focus-within
+                      ${pC} {
+                      opacity: ${+!t};
+                      pointer-events: ${t?`none`:`auto`};
                   }
               `}
 
