@@ -5,12 +5,21 @@ import type {
 import type { ChatMessageEntity } from '@memex/common/features/page-interactions/types'
 import { isChatMessageEntity } from '@memex/common/features/ai-chat/utils/chat-thread-messages'
 import { formatSecondsToHHMMSS } from '@memex/common/utils/format-time'
+import { buildSharedReadPath } from '@memex/common/features/sharing/shared-link-url'
+import {
+    flattenLocalizedSummaryText,
+    flattenLocalizedTranscriptText,
+} from '@memex/common/features/youtube/utils/localized-metadata'
 import type { App, TAbstractFile, TFile, Vault } from 'obsidian'
 import { getLatestAssistantMessageMarkdown } from '~/features/agent-chat/utils/assistant-message-markdown'
 import {
+    getTemplateNestedValue as getNestedValue,
+    renderMarkdownTemplate,
+    stringifyTemplatePlaceholderValue,
+} from '@memex/common/features/result-templates'
+import {
     DEFAULT_MEMEX_IMPORTS_FOLDER,
     DEFAULT_MEMEX_PLUGIN_FOLDER,
-    DEFAULT_MEMEX_TEMPLATES_FOLDER,
     DEFAULT_PULL_IMPORT_INTERVAL_MINUTES,
     DEFAULT_PULL_IMPORT_RULE_ID,
     DEFAULT_PULL_IMPORT_SETTINGS,
@@ -24,10 +33,10 @@ import {
     type PullImportSettings,
     type TemplatePlaceholderDefinition,
 } from './pull-import-definitions'
+import { getMemexUrl } from '~/utils/memex-url-utils'
 
 const MAX_POLL_INTERVAL_MINUTES = 24 * 60
 const DEFAULT_POLL_LIMIT = 50
-const TEMPLATE_PLACEHOLDER_PATTERN = /{{\s*metadata\.([a-zA-Z0-9_.-]+)\s*}}/g
 const ANNOTATIONS_SECTION_HEADING = '## Annotations'
 const AUTH_REQUIRED_MESSAGE =
     'You are not logged in to Memex. Log in to continue Obsidian pull imports.'
@@ -108,7 +117,6 @@ export class ObsidianPullImportService {
     }
 
     async initialize(): Promise<void> {
-        await this.reconcileTemplateLocation()
         await this.ensureDefaultTemplates()
     }
 
@@ -305,31 +313,6 @@ export class ObsidianPullImportService {
         )
     }
 
-    private async reconcileTemplateLocation(): Promise<void> {
-        const settings = this.getSettings()
-        if (this.app.vault.getAbstractFileByPath(settings.pluginFolderPath)) {
-            return
-        }
-
-        if (settings.pluginFolderPath === DEFAULT_MEMEX_PLUGIN_FOLDER) {
-            return
-        }
-
-        await this.updateSettings({
-            ...settings,
-            pluginFolderPath: DEFAULT_MEMEX_PLUGIN_FOLDER,
-            templatesFolderPath: DEFAULT_MEMEX_TEMPLATES_FOLDER,
-            rules: settings.rules.map((rule) => ({
-                ...rule,
-                targetFolderPath: remapPath({
-                    currentPath: rule.targetFolderPath,
-                    oldPath: settings.pluginFolderPath,
-                    newPath: DEFAULT_MEMEX_PLUGIN_FOLDER,
-                }),
-            })),
-        })
-    }
-
     private async pollImportRpc(params: {
         sinceUpdatedAt: string
         rules: PullImportRuleSettings[]
@@ -421,8 +404,23 @@ export class ObsidianPullImportService {
     ): Promise<UnknownRecord> {
         const baseMetadata = getTemplateMetadata(item)
         const tagNames = await this.loadTemplateTagNames(baseMetadata)
+        const annotationParentUrl =
+            item.content_type === 'annotation'
+                ? getAnnotationParentUrl(baseMetadata)
+                : null
+        const mediaTranscript = getMediaTranscript(
+            item.content_type,
+            baseMetadata,
+        )
+        const summary = getContentSummary(baseMetadata)
         const metadata = {
             ...baseMetadata,
+            ...(annotationParentUrl ? { parent_url: annotationParentUrl } : {}),
+            share_url: getMemexUrl(
+                buildSharedReadPath({ contentId: item.content_id }),
+            ),
+            ...(mediaTranscript ? { transcript: mediaTranscript } : {}),
+            ...(summary ? { summary } : {}),
             published: formatTimestampText(baseMetadata.published_at),
             tags: tagNames,
             tag_names: tagNames,
@@ -673,308 +671,308 @@ function buildContentFirstDefaultTemplate(
         case 'chatgpt':
         case 'claude':
             return buildTemplate([
-                '# {{metadata.title}}',
+                '# {{title}}',
                 '',
-                'Source: {{metadata.url}}',
-                'Author: {{metadata.author}}',
-                'Published: {{metadata.published}}',
-                'Tags: {{metadata.tags}}',
+                'Source: {{url}}',
+                'Author: {{author}}',
+                'Published: {{published}}',
+                'Tags: {{tags}}',
                 '',
                 '## Summary',
                 '',
-                '{{metadata.summary}}',
+                '{{summary}}',
                 '',
                 '## Description',
                 '',
-                '{{metadata.description}}',
+                '{{description}}',
             ])
         case 'pdf':
             return buildTemplate([
-                '# {{metadata.title}}',
+                '# {{title}}',
                 '',
-                'Source: {{metadata.url}}',
-                'Authors: {{metadata.authors}}',
-                'Published: {{metadata.published}}',
-                'Pages: {{metadata.page_count}}',
-                'Tags: {{metadata.tags}}',
+                'Source: {{url}}',
+                'Authors: {{authors}}',
+                'Published: {{published}}',
+                'Pages: {{page_count}}',
+                'Tags: {{tags}}',
                 '',
                 '## Abstract',
                 '',
-                '{{metadata.abstract}}',
+                '{{abstract}}',
                 '',
                 '## Known Sources',
                 '',
-                '{{metadata.source_urls}}',
+                '{{source_urls}}',
             ])
         case 'youtube':
         case 'youtubeShorts':
             return buildTemplate([
-                '# {{metadata.title}}',
+                '# {{title}}',
                 '',
-                'Source: {{metadata.url}}',
-                'Channel: {{metadata.channel_title}}',
-                'Published: {{metadata.published}}',
-                'Tags: {{metadata.tags}}',
+                'Source: {{url}}',
+                'Channel: {{channel_title}}',
+                'Published: {{published}}',
+                'Tags: {{tags}}',
                 '',
                 '## Summary',
                 '',
-                '{{metadata.summary}}',
+                '{{summary}}',
                 '',
                 '## Description',
                 '',
-                '{{metadata.description}}',
+                '{{description}}',
             ])
         case 'twitter':
             return buildTemplate([
-                '# {{metadata.author_name}}',
+                '# {{author_name}}',
                 '',
-                'Source: {{metadata.url}}',
-                'Author: {{metadata.author_name}} {{metadata.author_handle}}',
-                'Published: {{metadata.published}}',
-                'Tags: {{metadata.tags}}',
+                'Source: {{url}}',
+                'Author: {{author_name}} {{author_handle}}',
+                'Published: {{published}}',
+                'Tags: {{tags}}',
                 '',
                 '## Post',
                 '',
-                '{{metadata.text}}',
+                '{{text}}',
                 '',
                 '## Quoted Post',
                 '',
-                '{{metadata.quote_tweet}}',
+                '{{quote_tweet}}',
             ])
         case 'rssFeed':
             return buildTemplate([
-                '# {{metadata.title}}',
+                '# {{title}}',
                 '',
-                'Feed: {{metadata.feed_url}}',
-                'Site: {{metadata.site_url}}',
-                'Author: {{metadata.author_name}}',
-                'Platform: {{metadata.source_platform}}',
-                'Tags: {{metadata.tags}}',
+                'Feed: {{feed_url}}',
+                'Site: {{site_url}}',
+                'Author: {{author_name}}',
+                'Platform: {{source_platform}}',
+                'Tags: {{tags}}',
                 '',
                 '## Description',
                 '',
-                '{{metadata.description}}',
+                '{{description}}',
             ])
         case 'instagram':
         case 'pinterest':
         case 'snapchat':
             return buildTemplate([
-                '# {{metadata.title}}',
+                '# {{title}}',
                 '',
-                'Source: {{metadata.url}}',
-                'Author: {{metadata.author_name}} {{metadata.author_handle}}',
-                'Published: {{metadata.published}}',
-                'Tags: {{metadata.tags}}',
+                'Source: {{url}}',
+                'Author: {{author_name}} {{author_handle}}',
+                'Published: {{published}}',
+                'Tags: {{tags}}',
                 '',
                 '## Text',
                 '',
-                '{{metadata.text}}',
+                '{{text}}',
                 '',
                 '## Description',
                 '',
-                '{{metadata.description}}',
+                '{{description}}',
             ])
         case 'tiktok':
             return buildTemplate([
-                '# {{metadata.author.nickname}}',
+                '# {{author.nickname}}',
                 '',
-                'Source: {{metadata.url}}',
-                'Author: {{metadata.author.nickname}} {{metadata.author.uniqueId}}',
-                'Published: {{metadata.published}}',
-                'Tags: {{metadata.tags}}',
+                'Source: {{url}}',
+                'Author: {{author.nickname}} {{author.uniqueId}}',
+                'Published: {{published}}',
+                'Tags: {{tags}}',
                 '',
                 '## Description',
                 '',
-                '{{metadata.description}}',
+                '{{description}}',
             ])
         case 'facebook':
             return buildTemplate([
-                '# {{metadata.author_name}}',
+                '# {{author_name}}',
                 '',
-                'Source: {{metadata.url}}',
-                'Author: {{metadata.author_name}} {{metadata.author_handle}}',
-                'Published: {{metadata.published}}',
-                'Tags: {{metadata.tags}}',
+                'Source: {{url}}',
+                'Author: {{author_name}} {{author_handle}}',
+                'Published: {{published}}',
+                'Tags: {{tags}}',
                 '',
                 '## Post',
                 '',
-                '{{metadata.text}}',
+                '{{text}}',
             ])
         case 'linkedin':
             return buildTemplate([
                 '# LinkedIn post',
                 '',
-                'Source: {{metadata.url}}',
-                'Author: {{metadata.author_name}} {{metadata.author_handle}}',
-                'Published: {{metadata.published}}',
-                'Tags: {{metadata.tags}}',
+                'Source: {{url}}',
+                'Author: {{author_name}} {{author_handle}}',
+                'Published: {{published}}',
+                'Tags: {{tags}}',
                 '',
                 '## Post',
                 '',
-                '{{metadata.text}}',
+                '{{text}}',
             ])
         case 'linkedinProfile':
             return buildTemplate([
-                '# {{metadata.author_name}}',
+                '# {{author_name}}',
                 '',
-                'Source: {{metadata.url}}',
-                'Handle: {{metadata.author_handle}}',
-                'Tags: {{metadata.tags}}',
+                'Source: {{url}}',
+                'Handle: {{author_handle}}',
+                'Tags: {{tags}}',
                 '',
                 '## Description',
                 '',
-                '{{metadata.description}}',
+                '{{description}}',
             ])
         case 'reddit':
             return buildTemplate([
-                '# {{metadata.title}}',
+                '# {{title}}',
                 '',
-                'Source: {{metadata.url}}',
-                'Subreddit: {{metadata.subreddit_name}}',
-                'Author: {{metadata.author_name}} {{metadata.author_handle}}',
-                'Score: {{metadata.score}}',
-                'Published: {{metadata.published}}',
-                'Tags: {{metadata.tags}}',
+                'Source: {{url}}',
+                'Subreddit: {{subreddit_name}}',
+                'Author: {{author_name}} {{author_handle}}',
+                'Score: {{score}}',
+                'Published: {{published}}',
+                'Tags: {{tags}}',
                 '',
                 '## Post',
                 '',
-                '{{metadata.text}}',
+                '{{text}}',
             ])
         case 'annotation':
             return buildTemplate([
-                '# {{metadata.target_entity.title}}',
+                '# {{target_entity.title}}',
                 '',
-                'Source: {{metadata.target_entity.url}}',
-                'Tags: {{metadata.tags}}',
+                'Source: {{target_entity.url}}',
+                'Tags: {{tags}}',
                 '',
                 '## Annotation',
                 '',
-                '{{metadata.text}}',
+                '{{text}}',
             ])
         case 'image':
             return buildTemplate([
-                '# {{metadata.source_title}}',
+                '# {{source_title}}',
                 '',
-                'Source: {{metadata.source_url}}',
-                'Image: {{metadata.original_url}}',
-                'MIME type: {{metadata.mime_type}}',
-                'Tags: {{metadata.tags}}',
+                'Source: {{source_url}}',
+                'Image: {{original_url}}',
+                'MIME type: {{mime_type}}',
+                'Tags: {{tags}}',
                 '',
                 '## Description',
                 '',
-                '{{metadata.description}}',
+                '{{description}}',
             ])
         case 'transcribedMedia':
             return buildTemplate([
-                '# {{metadata.title}}',
+                '# {{title}}',
                 '',
-                'Source: {{metadata.url}}',
-                'Tags: {{metadata.tags}}',
+                'Source: {{url}}',
+                'Tags: {{tags}}',
                 '',
                 '## Summary',
                 '',
-                '{{metadata.summary}}',
+                '{{summary}}',
                 '',
                 '## Description',
                 '',
-                '{{metadata.description}}',
+                '{{description}}',
             ])
         case 'audioRecording':
             return buildTemplate([
-                '# {{metadata.title}}',
+                '# {{title}}',
                 '',
-                'Duration: {{metadata.duration}}',
-                'Tags: {{metadata.tags}}',
+                'Duration: {{duration}}',
+                'Tags: {{tags}}',
                 '',
                 '## Summary',
                 '',
-                '{{metadata.summary}}',
+                '{{summary}}',
                 '',
                 '## Transcript',
                 '',
-                '{{metadata.transcript}}',
+                '{{transcript}}',
             ])
         case 'chatThread':
             return buildTemplate([
-                '# {{metadata.title}}',
+                '# {{title}}',
                 '',
-                'Model: {{metadata.model_name}}',
-                'Tags: {{metadata.tags}}',
+                'Model: {{model_name}}',
+                'Tags: {{tags}}',
                 '',
                 '## Summary',
                 '',
-                '{{metadata.summary}}',
+                '{{summary}}',
             ])
         case 'twitterProfile':
             return buildTemplate([
-                '# {{metadata.author_name}}',
+                '# {{author_name}}',
                 '',
-                'Handle: {{metadata.author_handle}}',
-                'Tags: {{metadata.tags}}',
+                'Handle: {{author_handle}}',
+                'Tags: {{tags}}',
                 '',
                 '## Description',
                 '',
-                '{{metadata.description}}',
+                '{{description}}',
                 '',
                 '## Links',
                 '',
-                '{{metadata.bio_links}}',
+                '{{bio_links}}',
             ])
         case 'subreddit':
             return buildTemplate([
-                '# {{metadata.title}}',
+                '# {{title}}',
                 '',
-                'Display name: {{metadata.display_name}}',
-                'Tags: {{metadata.tags}}',
+                'Display name: {{display_name}}',
+                'Tags: {{tags}}',
                 '',
                 '## Description',
                 '',
-                '{{metadata.description}}',
+                '{{description}}',
             ])
         case 'youtubeChannel':
             return buildTemplate([
-                '# {{metadata.title}}',
+                '# {{title}}',
                 '',
-                'Handle: {{metadata.channel_handle}}',
-                'Tags: {{metadata.tags}}',
+                'Handle: {{channel_handle}}',
+                'Tags: {{tags}}',
                 '',
                 '## Description',
                 '',
-                '{{metadata.description}}',
+                '{{description}}',
             ])
         case 'book':
             return buildTemplate([
-                '# {{metadata.title}}',
+                '# {{title}}',
                 '',
-                'Subtitle: {{metadata.subtitle}}',
-                'Authors: {{metadata.authors}}',
-                'Publisher: {{metadata.publisher}}',
-                'Published: {{metadata.published}}',
-                'Pages: {{metadata.page_count}}',
-                'Language: {{metadata.language}}',
-                'Categories: {{metadata.categories}}',
-                'Tags: {{metadata.tags}}',
+                'Subtitle: {{subtitle}}',
+                'Authors: {{authors}}',
+                'Publisher: {{publisher}}',
+                'Published: {{published}}',
+                'Pages: {{page_count}}',
+                'Language: {{language}}',
+                'Categories: {{categories}}',
+                'Tags: {{tags}}',
                 '',
                 '## Description',
                 '',
-                '{{metadata.description}}',
+                '{{description}}',
             ])
         case 'audiobook':
             return buildTemplate([
-                '# {{metadata.title}}',
+                '# {{title}}',
                 '',
-                'Subtitle: {{metadata.subtitle}}',
-                'Authors: {{metadata.authors}}',
-                'Narrators: {{metadata.narrators}}',
-                'Publisher: {{metadata.publisher}}',
-                'Published: {{metadata.published}}',
-                'Language: {{metadata.language}}',
-                'Categories: {{metadata.categories}}',
-                'Tags: {{metadata.tags}}',
+                'Subtitle: {{subtitle}}',
+                'Authors: {{authors}}',
+                'Narrators: {{narrators}}',
+                'Publisher: {{publisher}}',
+                'Published: {{published}}',
+                'Language: {{language}}',
+                'Categories: {{categories}}',
+                'Tags: {{tags}}',
                 '',
                 '## Description',
                 '',
-                '{{metadata.description}}',
+                '{{description}}',
             ])
         default:
             return buildFallbackContentFirstDefaultTemplate(contentType)
@@ -986,20 +984,20 @@ function buildFallbackContentFirstDefaultTemplate(
 ): string {
     const titlePlaceholder = getPreferredTitlePlaceholder(contentType)
     return buildTemplate([
-        `# {{metadata.${titlePlaceholder}}}`,
+        `# {{${titlePlaceholder}}}`,
         '',
-        'Source: {{metadata.url}}',
-        'Tags: {{metadata.tags}}',
+        'Source: {{url}}',
+        'Tags: {{tags}}',
         '',
         '## Summary',
         '',
-        '{{metadata.summary}}',
+        '{{summary}}',
         '',
         '## Content',
         '',
-        '{{metadata.text}}',
+        '{{text}}',
         '',
-        '{{metadata.description}}',
+        '{{description}}',
     ])
 }
 
@@ -1009,35 +1007,32 @@ function buildLegacyDefaultTemplate(
     const placeholders = getLegacyDefaultTemplatePlaceholders(contentType)
     const titlePlaceholder = getPreferredTitlePlaceholder(contentType)
     const placeholderLines = placeholders
-        .map(
-            (placeholder) =>
-                `- ${placeholder.label}: {{metadata.${placeholder.path}}}`,
-        )
+        .map((placeholder) => `- ${placeholder.label}: {{${placeholder.path}}}`)
         .join('\n')
 
     return [
         '---',
-        'memex_id: "{{metadata.id}}"',
-        'memex_content_id: "{{metadata.content_id}}"',
-        'memex_library_id: "{{metadata.library_id}}"',
-        'memex_type: "{{metadata.type}}"',
-        'memex_external_id: "{{metadata.external_id}}"',
-        'memex_updated_at: "{{metadata.updated_at}}"',
+        'memex_id: "{{id}}"',
+        'memex_content_id: "{{content_id}}"',
+        'memex_library_id: "{{library_id}}"',
+        'memex_type: "{{type}}"',
+        'memex_external_id: "{{external_id}}"',
+        'memex_updated_at: "{{updated_at}}"',
         '---',
         '',
-        '<!-- memex-content-id: {{metadata.content_id}} -->',
+        '<!-- memex-content-id: {{content_id}} -->',
         '',
-        `# {{metadata.${titlePlaceholder}}}`,
+        `# {{${titlePlaceholder}}}`,
         '',
-        'Source: {{metadata.url}}',
+        'Source: {{url}}',
         '',
         '## Summary',
         '',
-        '{{metadata.summary}}',
+        '{{summary}}',
         '',
         '## Content',
         '',
-        '{{metadata.text}}',
+        '{{text}}',
         '',
         '## Metadata',
         '',
@@ -1070,7 +1065,7 @@ function getLegacyDefaultTemplatePlaceholders(
 
 function buildLegacyAudioRecordingDefaultTemplate(): string {
     return buildLegacyDefaultTemplate('audioRecording').replace(
-        '- AI summary response Markdown: {{metadata.summary_markdown}}\n- Transcript Markdown: {{metadata.transcript_markdown}}\n',
+        '- AI summary response Markdown: {{summary_markdown}}\n- Transcript Markdown: {{transcript_markdown}}\n',
         '',
     )
 }
@@ -1083,16 +1078,7 @@ function buildTemplate(lines: string[]): string {
     return [...lines, ''].join('\n')
 }
 
-export function renderTemplate(
-    template: string,
-    metadata: UnknownRecord,
-): string {
-    return template.replace(
-        TEMPLATE_PLACEHOLDER_PATTERN,
-        (_match, rawPath: string) =>
-            stringifyPlaceholderValue(metadata, rawPath),
-    )
-}
+export const renderTemplate = renderMarkdownTemplate
 
 export function getImportFilePath(params: {
     item: Pick<
@@ -1414,6 +1400,70 @@ function getAnnotationParentContentId(
         : null
 }
 
+function getAnnotationParentUrl(metadata: UnknownRecord): string | null {
+    const value =
+        metadata.parent_url ??
+        getNestedValue(metadata, 'target_entity.url') ??
+        metadata.url
+
+    return typeof value === 'string' && value.trim().length > 0
+        ? value.trim()
+        : null
+}
+
+function getMediaTranscript(
+    contentType: ObsidianImportContentType,
+    metadata: UnknownRecord,
+): string | null {
+    if (
+        contentType !== 'instagram' &&
+        contentType !== 'tiktok' &&
+        contentType !== 'twitter' &&
+        contentType !== 'youtube' &&
+        contentType !== 'youtubeShorts' &&
+        contentType !== 'reddit'
+    ) {
+        return null
+    }
+    if (!Array.isArray(metadata.media)) {
+        return null
+    }
+
+    const transcript = metadata.media
+        .filter(
+            (mediaEntry): mediaEntry is UnknownRecord =>
+                isRecord(mediaEntry) && mediaEntry.type === 'video',
+        )
+        .map((mediaEntry) =>
+            flattenLocalizedTranscriptText(mediaEntry.transcript),
+        )
+        .filter((value) => value.length > 0)
+        .join('\n\n')
+
+    return transcript.length > 0 ? transcript : null
+}
+
+function getContentSummary(metadata: UnknownRecord): string | null {
+    const directSummary =
+        typeof metadata.summary === 'string'
+            ? metadata.summary.trim()
+            : flattenLocalizedSummaryText(metadata.summary)
+    if (directSummary.length > 0) {
+        return directSummary
+    }
+    if (!Array.isArray(metadata.media)) {
+        return null
+    }
+
+    const mediaSummary = metadata.media
+        .filter(isRecord)
+        .map((mediaEntry) => flattenLocalizedSummaryText(mediaEntry.summary))
+        .filter((value) => value.length > 0)
+        .join('\n\n')
+
+    return mediaSummary.length > 0 ? mediaSummary : null
+}
+
 function buildAnnotationAppendMarkdown(params: {
     marker: string
     item: ObsidianPullImportRpcItem
@@ -1727,41 +1777,7 @@ function isSupabaseRpcErrorLike(error: unknown): error is SupabaseRpcErrorLike {
     return typeof error === 'object' && error != null
 }
 
-function stringifyPlaceholderValue(
-    metadata: UnknownRecord,
-    path: string,
-): string {
-    const value = getNestedValue(metadata, path)
-
-    if (value == null) {
-        return ''
-    }
-
-    if (Array.isArray(value)) {
-        const hasOnlyScalarValues = value.every(
-            (entry) => entry == null || typeof entry !== 'object',
-        )
-        return hasOnlyScalarValues
-            ? value.filter((entry) => entry != null).join(', ')
-            : JSON.stringify(value)
-    }
-
-    if (typeof value === 'object') {
-        return JSON.stringify(value)
-    }
-
-    return String(value)
-}
-
-function getNestedValue(metadata: UnknownRecord, path: string): unknown {
-    return path.split('.').reduce<unknown>((currentValue, segment) => {
-        if (!isRecord(currentValue)) {
-            return undefined
-        }
-
-        return currentValue[segment]
-    }, metadata)
-}
+const stringifyPlaceholderValue = stringifyTemplatePlaceholderValue
 
 function getPreferredTitlePlaceholder(
     contentType: ObsidianImportContentType,

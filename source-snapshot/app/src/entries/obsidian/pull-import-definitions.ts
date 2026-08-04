@@ -59,6 +59,8 @@ const COMMON_PLACEHOLDERS: TemplatePlaceholderDefinition[] = [
     { path: 'rule_id', label: 'Matched Obsidian import rule ID' },
     { path: 'rule_order', label: 'Matched Obsidian import rule order' },
     { path: 'published', label: 'Published date' },
+    { path: 'share_url', label: 'Memex reader share URL' },
+    { path: 'summary', label: 'Summary' },
     { path: 'tags', label: 'Memex tags' },
     { path: 'tag_ids', label: 'Memex tag IDs' },
 ]
@@ -135,6 +137,7 @@ export const OBSIDIAN_IMPORT_CONTENT_TYPE_DEFINITIONS: ImportContentTypeDefiniti
             { path: 'channel_title', label: 'Channel title' },
             { path: 'channel_id', label: 'Channel ID' },
             { path: 'media', label: 'Video media metadata' },
+            { path: 'transcript', label: 'Media transcript' },
         ]),
         defineContentType('youtubeShorts', 'YouTube Short', [
             { path: 'title', label: 'Title' },
@@ -143,6 +146,7 @@ export const OBSIDIAN_IMPORT_CONTENT_TYPE_DEFINITIONS: ImportContentTypeDefiniti
             { path: 'channel_title', label: 'Channel title' },
             { path: 'channel_id', label: 'Channel ID' },
             { path: 'media', label: 'Video media metadata' },
+            { path: 'transcript', label: 'Media transcript' },
         ]),
         defineContentType('twitter', 'Twitter/X post', [
             { path: 'author_name', label: 'Author name' },
@@ -153,6 +157,7 @@ export const OBSIDIAN_IMPORT_CONTENT_TYPE_DEFINITIONS: ImportContentTypeDefiniti
             { path: 'published_at', label: 'Published time in milliseconds' },
             { path: 'save_type', label: 'Save type' },
             { path: 'media', label: 'Media metadata' },
+            { path: 'transcript', label: 'Media transcript' },
         ]),
         defineContentType('rssFeed', 'RSS feed', [
             { path: 'title', label: 'Title' },
@@ -163,13 +168,17 @@ export const OBSIDIAN_IMPORT_CONTENT_TYPE_DEFINITIONS: ImportContentTypeDefiniti
             { path: 'source_platform', label: 'Source platform' },
             { path: 'avatar_path', label: 'Avatar asset path' },
         ]),
-        defineContentType('instagram', 'Instagram post', SOCIAL_PLACEHOLDERS),
+        defineContentType('instagram', 'Instagram post', [
+            ...SOCIAL_PLACEHOLDERS,
+            { path: 'transcript', label: 'Media transcript' },
+        ]),
         defineContentType('tiktok', 'TikTok post', [
             { path: 'description', label: 'Description' },
             { path: 'author.nickname', label: 'Author nickname' },
             { path: 'author.uniqueId', label: 'Author unique ID' },
             { path: 'author.id', label: 'Author ID' },
             { path: 'media', label: 'Media metadata' },
+            { path: 'transcript', label: 'Media transcript' },
         ]),
         defineContentType('facebook', 'Facebook post', [
             { path: 'text', label: 'Post text' },
@@ -199,6 +208,7 @@ export const OBSIDIAN_IMPORT_CONTENT_TYPE_DEFINITIONS: ImportContentTypeDefiniti
             { path: 'subreddit_id', label: 'Subreddit ID' },
             { path: 'score', label: 'Score' },
             { path: 'published_at', label: 'Published time in milliseconds' },
+            { path: 'transcript', label: 'Media transcript' },
         ]),
         defineContentType('snapchat', 'Snapchat item', SOCIAL_PLACEHOLDERS),
         defineContentType('chatgpt', 'ChatGPT conversation', WEB_PLACEHOLDERS),
@@ -210,6 +220,7 @@ export const OBSIDIAN_IMPORT_CONTENT_TYPE_DEFINITIONS: ImportContentTypeDefiniti
             { path: 'parent_content_id', label: 'Parent content entity ID' },
             { path: 'parent_library_id', label: 'Parent library row ID' },
             { path: 'parent_content_type', label: 'Parent content type' },
+            { path: 'parent_url', label: 'Parent URL' },
             { path: 'target_entity.title', label: 'Referenced title' },
             { path: 'target_entity.url', label: 'Referenced URL' },
         ]),
