@@ -19,7 +19,7 @@ import {
 import { ObsidianResultCardBlock } from './result-card-block'
 import { ObsidianRuntime } from './runtime'
 import { ObsidianSidebarSessionCache } from './sidebar-session-cache'
-import { ObsidianAuthSessionPersistence } from './auth-session-persistence'
+import { ObsidianAuthSessionLogic } from './auth-session-persistence'
 import { MEMEX_OBSIDIAN_VIEW_TYPE, MemexSidebarView } from './view'
 import { openExternalUrlInObsidianHost } from './external-url'
 import { getObsidianColorTheme } from './theme'
@@ -41,11 +41,19 @@ import {
 } from './pull-import-definitions'
 import {
     ObsidianPullImportAuthRequiredError,
-    ObsidianPullImportService,
+    ObsidianPullImportLogic,
     createDefaultPullImportRule,
     normalizeMemexObsidianSettings,
     type PullImportRunResult,
 } from './pull-import-service'
+import { ObsidianPullImportStorage } from './storage/pull-import'
+import { ObsidianVaultStorage } from './storage/vault'
+import { ObsidianAuthSessionStorage } from './storage/auth-session'
+import {
+    ObsidianAuthService,
+    type ObsidianAuthServiceInterface,
+} from '~/features/obsidian/services/auth'
+import { ObsidianTimerService } from '~/features/obsidian/services/timer'
 
 const OAUTH_PROTOCOL_ACTION = 'memex-auth'
 const OAUTH_LOGIN_PROVIDER = 'google'
@@ -646,10 +654,10 @@ export default class MemexObsidianPlugin extends Plugin {
             await this.startLoginFlow()
         },
     })
-    private authSessionPersistence: ObsidianAuthSessionPersistence | null = null
+    private authSessionLogic: ObsidianAuthSessionLogic | null = null
+    private authService: ObsidianAuthServiceInterface | null = null
     private stopAuthSessionSync: (() => void) | null = null
-    private pullImportService: ObsidianPullImportService | null = null
-    private pullImportIntervalId: number | null = null
+    private pullImportLogic: ObsidianPullImportLogic | null = null
     private isPullImportLoginFlowOpen = false
 
     private resolveRuntimeUrl(path: string): string | null {
@@ -669,18 +677,19 @@ export default class MemexObsidianPlugin extends Plugin {
         this.syncObsidianTheme()
         this.registerStartupThemeSync()
         await this.loadSettings()
-        const authSessionPersistence = this.getAuthSessionPersistence()
-        await authSessionPersistence.restoreSession()
-        this.stopAuthSessionSync = authSessionPersistence.startSync()
-        await authSessionPersistence.syncCurrentSession()
-        this.pullImportService = new ObsidianPullImportService({
-            app: this.app,
-            supabaseClient: getSupabaseClient(),
+        const authSessionLogic = this.getAuthSessionLogic()
+        await authSessionLogic.restoreSession()
+        this.stopAuthSessionSync = authSessionLogic.startSync()
+        await authSessionLogic.syncCurrentSession()
+        this.pullImportLogic = new ObsidianPullImportLogic({
+            storage: new ObsidianPullImportStorage(getSupabaseClient()),
+            vaultStorage: new ObsidianVaultStorage(this.app),
+            timerService: new ObsidianTimerService(),
             getSettings: () => this.settings.pullImport,
             updateSettings: (settings) =>
                 this.updatePullImportSettings(settings),
         })
-        await this.pullImportService.initialize()
+        await this.pullImportLogic.initialize()
         this.configurePullImportPolling()
         if (this.settings.pullImport.enabled) {
             void this.runPullImport({ silent: true })
@@ -796,29 +805,19 @@ export default class MemexObsidianPlugin extends Plugin {
     }
 
     private configurePullImportPolling(): void {
-        if (this.pullImportIntervalId != null) {
-            window.clearInterval(this.pullImportIntervalId)
-            this.pullImportIntervalId = null
-        }
-
-        if (!this.settings.pullImport.enabled) {
-            return
-        }
-
-        const intervalMs =
-            Math.max(1, this.settings.pullImport.pollIntervalMinutes) * 60_000
-        const intervalId = window.setInterval(() => {
+        const intervalId = this.pullImportLogic?.configurePolling(() => {
             void this.runPullImport({ silent: true })
-        }, intervalMs)
+        })
 
-        this.pullImportIntervalId = intervalId
-        this.registerInterval(intervalId)
+        if (intervalId != null) {
+            this.registerInterval(intervalId)
+        }
     }
 
     private async runPullImport(params: {
         silent: boolean
     }): Promise<PullImportRunResult | null> {
-        if (this.pullImportService == null) {
+        if (this.pullImportLogic == null) {
             return null
         }
 
@@ -828,7 +827,7 @@ export default class MemexObsidianPlugin extends Plugin {
                 return null
             }
 
-            return await this.pullImportService.runOnce()
+            return await this.pullImportLogic.runOnce()
         } catch (error) {
             if (error instanceof ObsidianPullImportAuthRequiredError) {
                 await this.handlePullImportAuthRequired(params)
@@ -844,16 +843,15 @@ export default class MemexObsidianPlugin extends Plugin {
     }
 
     private async hasMemexAuthSessionForPullImport(): Promise<boolean> {
-        const { data, error } = await getSupabaseClient().auth.getSession()
-        if (error != null) {
+        try {
+            return (await this.getAuthService().getSession()) != null
+        } catch (error) {
             console.warn(
                 '[Memex Obsidian] Could not read auth session before pull import.',
                 error,
             )
             return true
         }
-
-        return data.session != null
     }
 
     private async handlePullImportAuthRequired(params: {
@@ -883,7 +881,7 @@ export default class MemexObsidianPlugin extends Plugin {
         oldPath: string,
     ): Promise<void> {
         const didUpdate =
-            (await this.pullImportService?.handleVaultRename(file, oldPath)) ??
+            (await this.pullImportLogic?.handleVaultRename(file, oldPath)) ??
             false
         if (didUpdate) {
             this.configurePullImportPolling()
@@ -891,10 +889,7 @@ export default class MemexObsidianPlugin extends Plugin {
     }
 
     async onunload(): Promise<void> {
-        if (this.pullImportIntervalId != null) {
-            window.clearInterval(this.pullImportIntervalId)
-            this.pullImportIntervalId = null
-        }
+        this.pullImportLogic?.stopPolling()
         this.stopAuthSessionSync?.()
         this.stopAuthSessionSync = null
         this.sidebarSessionCache.dispose()
@@ -1089,7 +1084,7 @@ export default class MemexObsidianPlugin extends Plugin {
                 callbackUrl,
                 OAUTH_LOGIN_PROVIDER,
             )
-            await this.getAuthSessionPersistence().syncCurrentSession()
+            await this.getAuthSessionLogic().syncCurrentSession()
             try {
                 this.app.secretStorage.setSecret(
                     this.settings.callbackSecretId,
@@ -1253,17 +1248,25 @@ export default class MemexObsidianPlugin extends Plugin {
         return `[[memex:${contentId}]]`
     }
 
-    private getAuthSessionPersistence(): ObsidianAuthSessionPersistence {
-        if (this.authSessionPersistence == null) {
-            this.authSessionPersistence = new ObsidianAuthSessionPersistence({
-                secretStorage: this.app.secretStorage,
-                auth: getSupabaseClient().auth,
+    private getAuthSessionLogic(): ObsidianAuthSessionLogic {
+        if (this.authSessionLogic == null) {
+            this.authSessionLogic = new ObsidianAuthSessionLogic({
+                storage: new ObsidianAuthSessionStorage(this.app.secretStorage),
+                authService: this.getAuthService(),
                 onWarning: (message, error) => {
                     console.warn(`[Memex Obsidian] ${message}`, error)
                 },
             })
         }
 
-        return this.authSessionPersistence
+        return this.authSessionLogic
+    }
+
+    private getAuthService(): ObsidianAuthServiceInterface {
+        if (this.authService == null) {
+            this.authService = new ObsidianAuthService(getSupabaseClient().auth)
+        }
+
+        return this.authService
     }
 }

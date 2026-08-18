@@ -1,4 +1,5 @@
 import { Logic } from '@memex/common/features/ui-logic/logic'
+import type { DragEvent } from 'react'
 import {
     OBSIDIAN_IMPORT_CONTENT_TYPE_DEFINITION_BY_TYPE,
     type ObsidianImportContentType,
@@ -16,6 +17,7 @@ export interface ResultTemplateEditorDependencies {
     showEmbedOption: boolean
     onSave: (settings: ResultTemplateSettings) => Promise<void>
     onClose: () => void
+    window: Window
 }
 
 export interface ResultTemplateEditorState {
@@ -23,6 +25,8 @@ export interface ResultTemplateEditorState {
     mode: ResultTemplateMode
     template: string
     draftSettings: ResultTemplateSettings
+    isDraggingPlaceholder: boolean
+    placeholderQuery: string
 }
 
 export class ResultTemplateEditorLogic extends Logic<
@@ -31,10 +35,43 @@ export class ResultTemplateEditorLogic extends Logic<
 > {
     getInitialState(): ResultTemplateEditorState {
         const draftSettings = { ...this.deps.settings }
-        return this.getStateForContentType(
+        return {
+            ...this.getStateForContentType(
             this.deps.initialContentType,
             draftSettings,
-        )
+            ),
+            isDraggingPlaceholder: false,
+            placeholderQuery: '',
+        }
+    }
+
+    setPlaceholderQuery = (placeholderQuery: string): void =>
+        this.setState({ placeholderQuery })
+
+    setDraggingPlaceholder = (isDraggingPlaceholder: boolean): void =>
+        this.setState({ isDraggingPlaceholder })
+
+    handlePlaceholderDrop = (
+        event: DragEvent<HTMLTextAreaElement>,
+        mimeType: string,
+    ): void => {
+        const path = event.dataTransfer.getData(mimeType)
+        if (path.length === 0) {
+            return
+        }
+        event.preventDefault()
+        event.stopPropagation()
+        const textArea = event.currentTarget
+        const selectionStart = textArea.selectionStart ?? this.state.template.length
+        const selectionEnd = textArea.selectionEnd ?? selectionStart
+        const placeholder = `{{${path}}}`
+        this.insertPlaceholder(path, { selectionStart, selectionEnd })
+        this.setDraggingPlaceholder(false)
+        this.deps.window.requestAnimationFrame(() => {
+            const caretPosition = selectionStart + placeholder.length
+            textArea.focus()
+            textArea.setSelectionRange(caretPosition, caretPosition)
+        })
     }
 
     selectContentType = (contentType: ObsidianImportContentType): void => {
@@ -122,6 +159,8 @@ export class ResultTemplateEditorLogic extends Logic<
             mode,
             template,
             draftSettings: nextDraftSettings,
+            isDraggingPlaceholder: this.state?.isDraggingPlaceholder ?? false,
+            placeholderQuery: this.state?.placeholderQuery ?? '',
         }
     }
 }

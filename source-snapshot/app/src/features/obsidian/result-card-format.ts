@@ -18,8 +18,8 @@ import {
 import {
     getContentEntityUrl,
     getReferencedContentEntityUrl,
-} from '@memex/common/features/page-interactions/utils'
-import { getPublicImageUrl } from '@memex/common/utils/image-url'
+} from '~/utils/page-interactions'
+import { getPublicImageUrl } from '~/utils/image-url'
 import { formatSecondsToHHMMSS } from '@memex/common/utils/format-time'
 import { buildSharedReadPath } from '@memex/common/features/sharing/shared-link-url'
 import {
@@ -28,6 +28,7 @@ import {
 } from '@memex/common/features/youtube/utils/localized-metadata'
 import type { SearchResultEntity } from '~/features/search/ui/search-container/logic'
 import { getMemexUrl } from '~/utils/memex-url-utils'
+import type { ClipboardServiceInterface } from '~/services/clipboard'
 import {
     getResultTemplateSetting,
     isResultTemplateContentType,
@@ -897,29 +898,10 @@ export function parseMemexResultCardPayload(
 
 export async function copyMemexResultCardToClipboard(
     payload: MemexResultCardPayload,
+    clipboardService: ClipboardServiceInterface,
 ): Promise<void> {
     const codeBlock = serializeMemexResultCardCodeBlock(payload)
-
-    if (navigator.clipboard?.writeText != null) {
-        await navigator.clipboard.writeText(codeBlock)
-        return
-    }
-
-    const textarea = document.createElement('textarea')
-    textarea.value = codeBlock
-    textarea.setAttribute('readonly', 'true')
-    textarea.style.position = 'fixed'
-    textarea.style.opacity = '0'
-    textarea.style.pointerEvents = 'none'
-
-    document.body.appendChild(textarea)
-    textarea.select()
-
-    const didCopy = document.execCommand('copy')
-
-    document.body.removeChild(textarea)
-
-    if (!didCopy) {
-        throw new Error('Clipboard write failed')
-    }
+    await clipboardService.copyText(codeBlock, {
+        selectionFallback: 'after-api-unavailable',
+    })
 }

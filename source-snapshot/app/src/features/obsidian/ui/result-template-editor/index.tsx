@@ -37,15 +37,13 @@ export const ResultTemplateEditor: React.FC<ResultTemplateEditorProps> = ({
     onSave,
     onClose,
 }) => {
-    const [isDraggingPlaceholder, setIsDraggingPlaceholder] =
-        React.useState(false)
-    const [placeholderQuery, setPlaceholderQuery] = React.useState('')
     const { logic, state } = useLogic(ResultTemplateEditorLogic, {
         initialContentType,
         settings,
         showEmbedOption,
         onSave,
         onClose,
+        window,
     })
     const selectedDefinition =
         OBSIDIAN_IMPORT_CONTENT_TYPE_DEFINITION_BY_TYPE.get(
@@ -57,7 +55,7 @@ export const ResultTemplateEditor: React.FC<ResultTemplateEditorProps> = ({
             ? getMetadataPlaceholderDefinitions(currentContentTypeMetadata)
             : [],
     )
-    const normalizedPlaceholderQuery = placeholderQuery.trim().toLowerCase()
+    const normalizedPlaceholderQuery = state.placeholderQuery.trim().toLowerCase()
     const filteredPlaceholders =
         normalizedPlaceholderQuery.length === 0
             ? placeholders
@@ -72,32 +70,6 @@ export const ResultTemplateEditor: React.FC<ResultTemplateEditorProps> = ({
               )
     const isSaveDisabled =
         state.mode === 'custom' && state.template.trim().length === 0
-    const handlePlaceholderDrop = (
-        event: React.DragEvent<HTMLTextAreaElement>,
-    ): void => {
-        const path = event.dataTransfer.getData(
-            RESULT_TEMPLATE_PLACEHOLDER_MIME_TYPE,
-        )
-        if (path.length === 0) {
-            return
-        }
-
-        event.preventDefault()
-        event.stopPropagation()
-        const textArea = event.currentTarget
-        const selectionStart = textArea.selectionStart ?? state.template.length
-        const selectionEnd = textArea.selectionEnd ?? selectionStart
-        const placeholder = `{{${path}}}`
-        logic.insertPlaceholder(path, { selectionStart, selectionEnd })
-        setIsDraggingPlaceholder(false)
-
-        window.requestAnimationFrame(() => {
-            const caretPosition = selectionStart + placeholder.length
-            textArea.focus()
-            textArea.setSelectionRange(caretPosition, caretPosition)
-        })
-    }
-
     return (
         <EditorRoot data-result-card-interactive="true">
             <Header>
@@ -189,7 +161,7 @@ export const ResultTemplateEditor: React.FC<ResultTemplateEditorProps> = ({
                                 id="result-template"
                                 value={state.template}
                                 onChange={logic.setTemplate}
-                                $isDropTargetActive={isDraggingPlaceholder}
+                                $isDropTargetActive={state.isDraggingPlaceholder}
                                 onDragOver={(event) => {
                                     if (
                                         !event.dataTransfer.types.includes(
@@ -203,7 +175,12 @@ export const ResultTemplateEditor: React.FC<ResultTemplateEditorProps> = ({
                                     event.stopPropagation()
                                     event.dataTransfer.dropEffect = 'copy'
                                 }}
-                                onDrop={handlePlaceholderDrop}
+                                onDrop={(event) =>
+                                    logic.handlePlaceholderDrop(
+                                        event,
+                                        RESULT_TEMPLATE_PLACEHOLDER_MIME_TYPE,
+                                    )
+                                }
                                 rows={9}
                                 resize="vertical"
                                 spellCheck={false}
@@ -225,8 +202,8 @@ export const ResultTemplateEditor: React.FC<ResultTemplateEditorProps> = ({
                                     />
                                 </PlaceholderTitleGroup>
                                 <PlaceholderSearchField
-                                    value={placeholderQuery}
-                                    onChange={setPlaceholderQuery}
+                                    value={state.placeholderQuery}
+                                    onChange={logic.setPlaceholderQuery}
                                     placeholder="Search placeholders"
                                     ariaLabel="Search available placeholders"
                                     icon="searchIcon"
@@ -254,11 +231,11 @@ export const ResultTemplateEditor: React.FC<ResultTemplateEditorProps> = ({
                                                     'text/plain',
                                                     `{{${placeholder.path}}}`,
                                                 )
-                                                setIsDraggingPlaceholder(true)
+                                                logic.setDraggingPlaceholder(true)
                                             }}
                                             onDragEnd={(event) => {
                                                 event.stopPropagation()
-                                                setIsDraggingPlaceholder(false)
+                                                logic.setDraggingPlaceholder(false)
                                             }}
                                             onClick={() =>
                                                 logic.insertPlaceholder(

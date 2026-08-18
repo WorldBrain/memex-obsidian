@@ -1,7 +1,4 @@
-import type {
-    CommonJson,
-    CommonSupabaseClient,
-} from '@memex/common/storage/supabase-types'
+import type { CommonSupabaseClient } from '@memex/common/storage/supabase-types'
 import type { ChatMessageEntity } from '@memex/common/features/page-interactions/types'
 import { isChatMessageEntity } from '@memex/common/features/ai-chat/utils/chat-thread-messages'
 import { formatSecondsToHHMMSS } from '@memex/common/utils/format-time'
@@ -10,7 +7,7 @@ import {
     flattenLocalizedSummaryText,
     flattenLocalizedTranscriptText,
 } from '@memex/common/features/youtube/utils/localized-metadata'
-import type { App, TAbstractFile, TFile, Vault } from 'obsidian'
+import type { App, TAbstractFile, TFile } from 'obsidian'
 import { getLatestAssistantMessageMarkdown } from '~/features/agent-chat/utils/assistant-message-markdown'
 import {
     getTemplateNestedValue as getNestedValue,
@@ -34,6 +31,19 @@ import {
     type TemplatePlaceholderDefinition,
 } from './pull-import-definitions'
 import { getMemexUrl } from '~/utils/memex-url-utils'
+import {
+    ObsidianPullImportStorage,
+    type ObsidianPullImportStorageInterface,
+    type ObsidianPullImportStorageRule,
+} from './storage/pull-import'
+import {
+    ObsidianVaultStorage,
+    type ObsidianVaultStorageInterface,
+} from './storage/vault'
+import {
+    ObsidianTimerService,
+    type ObsidianTimerServiceInterface,
+} from '~/features/obsidian/services/timer'
 
 const MAX_POLL_INTERVAL_MINUTES = 24 * 60
 const DEFAULT_POLL_LIMIT = 50
@@ -90,27 +100,31 @@ export interface PullImportRunResult {
     initializedCursor: boolean
 }
 
-interface ObsidianPullImportServiceOptions {
-    app: App
-    supabaseClient: CommonSupabaseClient
+interface ObsidianPullImportLogicOptions {
+    storage: ObsidianPullImportStorageInterface
+    vaultStorage: ObsidianVaultStorageInterface
+    timerService: ObsidianTimerServiceInterface
     getSettings: () => PullImportSettings
     updateSettings: (settings: PullImportSettings) => Promise<void>
     now?: () => Date
 }
 
-export class ObsidianPullImportService {
-    private readonly app: App
-    private readonly supabaseClient: CommonSupabaseClient
+export class ObsidianPullImportLogic {
+    private readonly storage: ObsidianPullImportStorageInterface
+    private readonly vaultStorage: ObsidianVaultStorageInterface
+    private readonly timerService: ObsidianTimerServiceInterface
     private readonly getSettings: () => PullImportSettings
     private readonly updateSettings: (
         settings: PullImportSettings,
     ) => Promise<void>
     private readonly now: () => Date
     private isRunning = false
+    private pollingIntervalId: number | null = null
 
-    constructor(options: ObsidianPullImportServiceOptions) {
-        this.app = options.app
-        this.supabaseClient = options.supabaseClient
+    constructor(options: ObsidianPullImportLogicOptions) {
+        this.storage = options.storage
+        this.vaultStorage = options.vaultStorage
+        this.timerService = options.timerService
         this.getSettings = options.getSettings
         this.updateSettings = options.updateSettings
         this.now = options.now ?? (() => new Date())
@@ -118,6 +132,31 @@ export class ObsidianPullImportService {
 
     async initialize(): Promise<void> {
         await this.ensureDefaultTemplates()
+    }
+
+    configurePolling(onPoll: () => void): number | null {
+        this.stopPolling()
+
+        const settings = this.getSettings()
+        if (!settings.enabled) {
+            return null
+        }
+
+        const intervalMs = Math.max(1, settings.pollIntervalMinutes) * 60_000
+        this.pollingIntervalId = this.timerService.scheduleRepeating(
+            onPoll,
+            intervalMs,
+        )
+        return this.pollingIntervalId
+    }
+
+    stopPolling(): void {
+        if (this.pollingIntervalId == null) {
+            return
+        }
+
+        this.timerService.cancel(this.pollingIntervalId)
+        this.pollingIntervalId = null
     }
 
     async runOnce(): Promise<PullImportRunResult> {
@@ -272,15 +311,14 @@ export class ObsidianPullImportService {
 
     async ensureDefaultTemplates(): Promise<void> {
         const settings = this.getSettings()
-        await ensureFolder(this.app.vault, settings.pluginFolderPath)
-        await ensureFolder(this.app.vault, settings.templatesFolderPath)
+        await this.vaultStorage.ensureFolder(settings.pluginFolderPath)
+        await this.vaultStorage.ensureFolder(settings.templatesFolderPath)
 
         for (const definition of OBSIDIAN_IMPORT_CONTENT_TYPE_DEFINITIONS) {
             const templatePath = getTemplatePath(settings, definition.type)
-            const existingTemplate =
-                this.app.vault.getAbstractFileByPath(templatePath)
+            const existingTemplate = this.vaultStorage.getFile(templatePath)
             if (existingTemplate != null) {
-                if (isVaultMarkdownFile(this.app.vault, existingTemplate)) {
+                if (this.vaultStorage.isMarkdownFile(existingTemplate)) {
                     await this.upgradeGeneratedDefaultTemplate({
                         templateFile: existingTemplate,
                         contentType: definition.type,
@@ -289,7 +327,7 @@ export class ObsidianPullImportService {
                 continue
             }
 
-            await this.app.vault.create(
+            await this.vaultStorage.createFile(
                 templatePath,
                 buildDefaultTemplate(definition.type),
             )
@@ -300,7 +338,9 @@ export class ObsidianPullImportService {
         templateFile: TFile
         contentType: ObsidianImportContentType
     }): Promise<void> {
-        const currentTemplate = await this.app.vault.read(params.templateFile)
+        const currentTemplate = await this.vaultStorage.readFile(
+            params.templateFile,
+        )
         const generatedTemplatesToUpgrade =
             getGeneratedDefaultTemplatesToUpgrade(params.contentType)
 
@@ -308,7 +348,7 @@ export class ObsidianPullImportService {
             return
         }
 
-        await this.app.vault.process(params.templateFile, () =>
+        await this.vaultStorage.processFile(params.templateFile, () =>
             buildDefaultTemplate(params.contentType),
         )
     }
@@ -318,23 +358,21 @@ export class ObsidianPullImportService {
         rules: PullImportRuleSettings[]
     }): Promise<ObsidianPullImportRpcResponse> {
         const rpcRules = params.rules.map(
-            (rule, index): ObsidianPullImportRpcRule => ({
+            (rule, index): ObsidianPullImportStorageRule => ({
                 ruleId: rule.id,
                 ruleOrder: index,
                 contentTypes: rule.contentTypes,
             }),
         )
 
-        const { data, error } = await this.supabaseClient.rpc(
-            'memex_poll_obsidian_imports',
-            {
-                p_since_updated_at: params.sinceUpdatedAt,
-                p_rules: rpcRules as unknown as CommonJson,
-                p_limit: DEFAULT_POLL_LIMIT,
-            },
-        )
-
-        if (error != null) {
+        let data: unknown
+        try {
+            data = await this.storage.pollImports({
+                sinceUpdatedAt: params.sinceUpdatedAt,
+                rules: rpcRules,
+                limit: DEFAULT_POLL_LIMIT,
+            })
+        } catch (error) {
             if (isPullImportAuthRequiredRpcError(error)) {
                 throw new ObsidianPullImportAuthRequiredError(error)
             }
@@ -361,14 +399,14 @@ export class ObsidianPullImportService {
             }
         }
 
-        await ensureFolder(this.app.vault, params.rule.targetFolderPath)
+        await this.vaultStorage.ensureFolder(params.rule.targetFolderPath)
         const filePath = getImportFilePath(params)
 
-        if (this.app.vault.getAbstractFileByPath(filePath) != null) {
+        if (this.vaultStorage.getFile(filePath) != null) {
             return 'skipped'
         }
 
-        await this.app.vault.create(filePath, rendered)
+        await this.vaultStorage.createFile(filePath, rendered)
         return 'imported'
     }
 
@@ -379,19 +417,22 @@ export class ObsidianPullImportService {
             this.getSettings(),
             item.content_type,
         )
-        if (this.app.vault.getAbstractFileByPath(templatePath) == null) {
-            await this.app.vault.create(
+        if (this.vaultStorage.getFile(templatePath) == null) {
+            await this.vaultStorage.createFile(
                 templatePath,
                 buildDefaultTemplate(item.content_type),
             )
         }
 
-        const templateFile = this.app.vault.getAbstractFileByPath(
-            templatePath,
-        ) as TFile | null
+        const abstractTemplateFile = this.vaultStorage.getFile(templatePath)
+        const templateFile =
+            abstractTemplateFile != null &&
+            this.vaultStorage.isMarkdownFile(abstractTemplateFile)
+                ? abstractTemplateFile
+                : null
         const template =
             templateFile != null
-                ? await this.app.vault.read(templateFile)
+                ? await this.vaultStorage.readFile(templateFile)
                 : buildDefaultTemplate(item.content_type)
         const metadata = await this.getTemplateMetadata(item)
         const rendered = renderTemplate(template, metadata)
@@ -468,31 +509,7 @@ export class ObsidianPullImportService {
             return []
         }
 
-        const { data, error } = await this.supabaseClient
-            .from('user_tags')
-            .select('id,name')
-            .in('id', tagIds)
-
-        if (error != null) {
-            throw error
-        }
-
-        const tagNamesById = new Map<string, string>()
-        for (const row of Array.isArray(data) ? data : []) {
-            if (!isRecord(row)) {
-                continue
-            }
-
-            const id = normalizeString(row.id, '')
-            const name = normalizeString(row.name, '')
-            if (id && name) {
-                tagNamesById.set(id, name)
-            }
-        }
-
-        return tagIds
-            .map((tagId) => tagNamesById.get(tagId) ?? '')
-            .filter(Boolean)
+        return this.storage.loadTagNames(tagIds)
     }
 
     private async loadAudioRecordingSummaryMarkdown(
@@ -521,17 +538,7 @@ export class ObsidianPullImportService {
     private async loadContentEntityMetadata(
         contentId: string,
     ): Promise<UnknownRecord | null> {
-        const { data, error } = await this.supabaseClient
-            .from('content_entities')
-            .select('metadata')
-            .eq('id', contentId)
-            .maybeSingle()
-
-        if (error != null) {
-            throw error
-        }
-
-        return isRecord(data?.metadata) ? data.metadata : null
+        return this.storage.loadContentEntityMetadata(contentId)
     }
 
     private async findAnnotationParentFile(
@@ -542,10 +549,10 @@ export class ObsidianPullImportService {
             return null
         }
 
-        return findImportedContentFileByContentId(
-            this.app.vault,
-            parentContentId,
-        )
+        return this.vaultStorage.findMarkdownFile({
+            matches: (markdown) =>
+                containsContentIdMarker(markdown, parentContentId),
+        })
     }
 
     private async appendAnnotationToParentFile(params: {
@@ -560,7 +567,7 @@ export class ObsidianPullImportService {
         let appended = false
         let skipped = false
 
-        await this.app.vault.process(params.parentFile, (data) => {
+        await this.vaultStorage.processFile(params.parentFile, (data) => {
             if (data.includes(annotationMarker)) {
                 skipped = true
                 return data
@@ -578,6 +585,31 @@ export class ObsidianPullImportService {
         })
 
         return appended && !skipped ? 'imported' : 'skipped'
+    }
+}
+
+interface ObsidianPullImportServiceOptions {
+    app: App
+    supabaseClient: CommonSupabaseClient
+    getSettings: () => PullImportSettings
+    updateSettings: (settings: PullImportSettings) => Promise<void>
+    now?: () => Date
+}
+
+/**
+ * Compatibility composition adapter for callers that still construct the old
+ * entry-local service. Production composition uses ObsidianPullImportLogic.
+ */
+export class ObsidianPullImportService extends ObsidianPullImportLogic {
+    constructor(options: ObsidianPullImportServiceOptions) {
+        super({
+            storage: new ObsidianPullImportStorage(options.supabaseClient),
+            vaultStorage: new ObsidianVaultStorage(options.app),
+            timerService: new ObsidianTimerService(),
+            getSettings: options.getSettings,
+            updateSettings: options.updateSettings,
+            now: options.now,
+        })
     }
 }
 
@@ -1356,26 +1388,6 @@ function ensureHiddenContentIdMarker(
     return `${frontmatter}\n\n${marker}\n\n${body}`
 }
 
-async function findImportedContentFileByContentId(
-    vault: Vault,
-    contentId: string,
-): Promise<TFile | null> {
-    for (const file of vault.getMarkdownFiles()) {
-        const markdown = await vault.read(file)
-        if (containsContentIdMarker(markdown, contentId)) {
-            return file
-        }
-    }
-
-    return null
-}
-
-function isVaultMarkdownFile(vault: Vault, file: TAbstractFile): file is TFile {
-    return vault
-        .getMarkdownFiles()
-        .some((markdownFile) => markdownFile.path === file.path)
-}
-
 function containsContentIdMarker(markdown: string, contentId: string): boolean {
     if (markdown.includes(getHiddenContentIdMarker(contentId))) {
         return true
@@ -1677,22 +1689,6 @@ function isUuidString(value: string): boolean {
     return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
         value.trim(),
     )
-}
-
-async function ensureFolder(vault: Vault, folderPath: string): Promise<void> {
-    const normalizedPath = normalizePath(folderPath)
-    const segments = normalizedPath.split('/').filter(Boolean)
-    let currentPath = ''
-
-    for (const segment of segments) {
-        currentPath = currentPath ? `${currentPath}/${segment}` : segment
-
-        if (vault.getAbstractFileByPath(currentPath) != null) {
-            continue
-        }
-
-        await vault.createFolder(currentPath)
-    }
 }
 
 function getTemplatePath(

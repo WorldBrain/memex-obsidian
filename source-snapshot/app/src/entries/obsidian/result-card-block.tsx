@@ -12,7 +12,7 @@ import {
     getContentEntityReferenceIds,
     toContentEntityReferences,
 } from '@memex/common/features/page-interactions/types'
-import { getContentEntityUrl } from '@memex/common/features/page-interactions/utils'
+import { getContentEntityUrl } from '~/utils/page-interactions'
 import {
     findAnnotationTargetReferenceId,
     getAnnotationReferenceContentIds,
