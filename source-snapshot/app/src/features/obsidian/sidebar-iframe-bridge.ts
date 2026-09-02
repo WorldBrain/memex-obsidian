@@ -1,11 +1,12 @@
 import type { AuthSessionPayload } from '@memex/common/features/auth/services/types'
+import { DEFAULT_LOCAL_MEMEX_WEB_APP_ORIGIN } from '@memex/common/features/self-hosting/endpoints'
 
 export const OBSIDIAN_SIDEBAR_BRIDGE_VERSION = 1
 export const OBSIDIAN_SIDEBAR_DASHBOARD_PATH = '/dashboard'
 export const OBSIDIAN_SIDEBAR_HOST_QUERY_PARAM = 'host'
 export const OBSIDIAN_SIDEBAR_HOST_QUERY_VALUE = 'obsidian'
 export const OBSIDIAN_OAUTH_CALLBACK_URL = 'obsidian://memex-auth'
-const DEFAULT_OBSIDIAN_SIDEBAR_DEV_BASE_URL = 'http://localhost:3002'
+const DEFAULT_OBSIDIAN_SIDEBAR_DEV_BASE_URL = DEFAULT_LOCAL_MEMEX_WEB_APP_ORIGIN
 const DEFAULT_OBSIDIAN_SIDEBAR_PROD_BASE_URL = 'https://memex.garden'
 
 export interface ObsidianSidebarBridgeFeatureFlags {
