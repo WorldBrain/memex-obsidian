@@ -29,6 +29,8 @@ import {
 import type { SearchResultEntity } from '~/features/search/ui/search-container/logic'
 import { getMemexUrl } from '~/utils/memex-url-utils'
 import type { ClipboardServiceInterface } from '~/services/clipboard'
+import type { ImageUrlRuntimeConfig } from '@memex/common/services/runtime-config'
+import { createAppRuntimeConfig } from '~/services/shared/runtime-config'
 import {
     getResultTemplateSetting,
     isResultTemplateContentType,
@@ -73,6 +75,90 @@ export interface MemexResultCardTransferData {
     markdown: string
     plainText: string
     templateMetadata: ResultTemplateMetadata
+}
+
+export type ResultCardCopyHydrationField = 'transcript'
+
+export interface ResultCardCopyHydrationRequest {
+    contentIds: string[]
+    fields: ResultCardCopyHydrationField[]
+}
+
+const RESULT_CARD_COPY_HYDRATION_FIELDS: ReadonlyArray<{
+    field: ResultCardCopyHydrationField
+    isMissing: (entity: SearchResultEntity) => boolean
+}> = [
+    {
+        field: 'transcript',
+        isMissing: (entity) => {
+            const media = (entity as ContentEntity & { media?: unknown }).media
+            return (
+                Array.isArray(media) &&
+                media.some(
+                    (mediaEntry) =>
+                        typeof mediaEntry === 'object' &&
+                        mediaEntry != null &&
+                        'type' in mediaEntry &&
+                        mediaEntry.type === 'video',
+                ) &&
+                getMediaTranscript(entity) == null
+            )
+        },
+    },
+]
+
+export async function hydrateResultCardEntitiesForCopy(params: {
+    entities: SearchResultEntity[]
+    loadEntities: (
+        request: ResultCardCopyHydrationRequest,
+    ) => Promise<ContentEntity[]>
+}): Promise<SearchResultEntity[]> {
+    const requestGroups = new Map<
+        string,
+        {
+            contentIds: string[]
+            fields: ResultCardCopyHydrationField[]
+        }
+    >()
+
+    for (const entity of params.entities) {
+        const fields = RESULT_CARD_COPY_HYDRATION_FIELDS.filter(
+            ({ isMissing }) => isMissing(entity),
+        ).map(({ field }) => field)
+        if (fields.length === 0) {
+            continue
+        }
+
+        const key = fields.join(',')
+        const group = requestGroups.get(key)
+        if (group) {
+            group.contentIds.push(entity.id)
+        } else {
+            requestGroups.set(key, { contentIds: [entity.id], fields })
+        }
+    }
+
+    if (requestGroups.size === 0) {
+        return params.entities
+    }
+
+    const hydratedEntities = (
+        await Promise.all(
+            [...requestGroups.values()].map((request) =>
+                params.loadEntities(request),
+            ),
+        )
+    ).flat()
+    const hydratedEntitiesById = new Map(
+        hydratedEntities.map((entity) => [entity.id, entity]),
+    )
+
+    return params.entities.map((entity) => {
+        const hydratedEntity = hydratedEntitiesById.get(entity.id)
+        return hydratedEntity == null
+            ? entity
+            : ({ ...entity, ...hydratedEntity } as SearchResultEntity)
+    })
 }
 
 function trimNonEmptyString(value: string | undefined | null): string | null {
@@ -229,6 +315,7 @@ function buildMinimalReferenceRootEntity(params: {
 function sanitizeRelatedContentEntityForPayload(params: {
     relatedEntity: ContentEntity
     rootReferenceEntity: ContentEntity | null
+    runtimeConfig: ImageUrlRuntimeConfig
     contentEntitiesById: Record<string, ContentEntity>
     referencesByContentEntityId?: Record<
         string,
@@ -240,6 +327,7 @@ function sanitizeRelatedContentEntityForPayload(params: {
         params.relatedEntity,
         resolveMemexResultCardEntityUrl({
             entity: params.relatedEntity,
+            runtimeConfig: params.runtimeConfig,
             userId: params.userId,
             contentEntitiesById: params.contentEntitiesById,
             referencesByContentEntityId: params.referencesByContentEntityId,
@@ -271,6 +359,7 @@ function sanitizeRelatedContentEntityForPayload(params: {
         entity: selectorRootEntity,
         resolvedUrl: resolveMemexResultCardEntityUrl({
             entity: selectorRootEntity,
+            runtimeConfig: params.runtimeConfig,
             userId: params.userId,
             contentEntitiesById: params.contentEntitiesById,
             referencesByContentEntityId: params.referencesByContentEntityId,
@@ -324,6 +413,7 @@ export function serializeMemexResultCardCodeBlock(
 
 function resolveMemexResultCardEntityUrl(params: {
     entity: ContentEntity
+    runtimeConfig: ImageUrlRuntimeConfig
     userId?: string
     contentEntitiesById: Record<string, ContentEntity>
     referencesByContentEntityId?: Record<
@@ -332,7 +422,7 @@ function resolveMemexResultCardEntityUrl(params: {
     >
 }): string | null {
     return (
-        getContentEntityUrl(params.entity, {
+        getContentEntityUrl(params.entity, params.runtimeConfig, {
             userId: params.userId,
             getPublicImageUrl,
             getParentEntity: (id) => params.contentEntitiesById[id],
@@ -344,18 +434,21 @@ function resolveMemexResultCardEntityUrl(params: {
     )
 }
 
-export function buildObsidianResultCardTransferData(params: {
-    entity: SearchResultEntity
-    snippets?: MemexResultCardSnippet[]
-    userId?: string
-    tagEntitiesById: Record<string, TagEntity>
-    contentEntitiesById: Record<string, ContentEntity>
-    referencesByContentEntityId?: Record<
-        string,
-        MemexResultCardReferences | undefined
-    >
-    resultTemplateSettings?: ResultTemplateSettings
-}): MemexResultCardTransferData {
+export function buildObsidianResultCardTransferData(
+    params: {
+        entity: SearchResultEntity
+        snippets?: MemexResultCardSnippet[]
+        userId?: string
+        tagEntitiesById: Record<string, TagEntity>
+        contentEntitiesById: Record<string, ContentEntity>
+        referencesByContentEntityId?: Record<
+            string,
+            MemexResultCardReferences | undefined
+        >
+        resultTemplateSettings?: ResultTemplateSettings
+    },
+    runtimeConfig: ImageUrlRuntimeConfig = createAppRuntimeConfig(),
+): MemexResultCardTransferData {
     const tagEntities = (params.entity.tag_ids ?? [])
         .map((tagId) => params.tagEntitiesById[tagId])
         .filter((tag): tag is TagEntity => tag != null)
@@ -395,6 +488,7 @@ export function buildObsidianResultCardTransferData(params: {
             sanitizeRelatedContentEntityForPayload({
                 relatedEntity,
                 rootReferenceEntity,
+                runtimeConfig,
                 userId: params.userId,
                 contentEntitiesById: params.contentEntitiesById,
                 referencesByContentEntityId: params.referencesByContentEntityId,
@@ -407,6 +501,7 @@ export function buildObsidianResultCardTransferData(params: {
         relatedContentEntities,
         resolvedEntityUrl: resolveMemexResultCardEntityUrl({
             entity: params.entity,
+            runtimeConfig,
             userId: params.userId,
             contentEntitiesById: params.contentEntitiesById,
             referencesByContentEntityId: params.referencesByContentEntityId,
@@ -424,6 +519,7 @@ export function buildObsidianResultCardTransferData(params: {
     const plainText =
         resolveMemexResultCardEntityUrl({
             entity: payload.entity,
+            runtimeConfig,
             userId: params.userId,
             contentEntitiesById,
             referencesByContentEntityId: {
@@ -443,6 +539,7 @@ export function buildObsidianResultCardTransferData(params: {
         payload.entity.id
     const codeBlock = serializeMemexResultCardCodeBlock(payload)
     const templateMetadata = buildObsidianResultTemplateMetadata(payload, {
+        runtimeConfig,
         userId: params.userId,
         contentEntitiesById: params.contentEntitiesById,
         referencesByContentEntityId: params.referencesByContentEntityId,
@@ -479,6 +576,7 @@ export function buildObsidianResultCardTransferData(params: {
 function buildObsidianResultTemplateMetadata(
     payload: MemexResultCardPayload,
     context: {
+        runtimeConfig: ImageUrlRuntimeConfig
         userId?: string
         contentEntitiesById: Record<string, ContentEntity>
         referencesByContentEntityId?: Record<
@@ -573,6 +671,7 @@ function getMediaTranscript(entity: SearchResultEntity): string | null {
 
 function renderAnnotationContentAsMarkdown(params: {
     content: JSONContent
+    runtimeConfig: ImageUrlRuntimeConfig
     userId?: string
     contentEntitiesById: Record<string, ContentEntity>
     referencesByContentEntityId?: Record<
@@ -648,6 +747,7 @@ function renderAnnotationContentAsMarkdown(params: {
 function renderAnnotationReferenceAsMarkdown(
     attrs: Record<string, unknown> | undefined,
     context: {
+        runtimeConfig: ImageUrlRuntimeConfig
         userId?: string
         contentEntitiesById: Record<string, ContentEntity>
         referencesByContentEntityId?: Record<
@@ -686,20 +786,24 @@ function renderAnnotationReferenceAsMarkdown(
         ? `${baseLabel} (${timestampLabel})`
         : baseLabel
     const url = referenceEntity
-        ? (getReferencedContentEntityUrl(referenceEntity, {
-              userId: context.userId,
-              getPublicImageUrl,
-              getParentEntity: (id) =>
-                  getContentEntityFromCache({
-                      contentEntitiesById: context.contentEntitiesById,
-                      id,
-                  }),
-              getRelatedContentIds: (id) =>
-                  getContentEntityReferenceIds(
-                      context.referencesByContentEntityId?.[id]
-                          ?.contentEntityIds,
-                  ),
-          }) ?? pickNonEmptyString(attrs?.url))
+        ? (getReferencedContentEntityUrl(
+              referenceEntity,
+              context.runtimeConfig,
+              {
+                  userId: context.userId,
+                  getPublicImageUrl,
+                  getParentEntity: (id) =>
+                      getContentEntityFromCache({
+                          contentEntitiesById: context.contentEntitiesById,
+                          id,
+                      }),
+                  getRelatedContentIds: (id) =>
+                      getContentEntityReferenceIds(
+                          context.referencesByContentEntityId?.[id]
+                              ?.contentEntityIds,
+                      ),
+              },
+          ) ?? pickNonEmptyString(attrs?.url))
         : pickNonEmptyString(attrs?.url)
 
     const videoTimestampRange =
