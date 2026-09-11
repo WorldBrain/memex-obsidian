@@ -40,8 +40,7 @@ import {
 } from '@memex/common/features/result-templates'
 
 export const MEMEX_RESULT_CARD_CODE_BLOCK_LANGUAGE = 'memex-card'
-export const MEMEX_RESULT_CARD_DRAG_MIME_TYPE =
-    'application/x-memex-result-card'
+export { MEMEX_RESULT_CARD_DRAG_MIME_TYPE } from '~/utils/obsidian-result-card-contract'
 
 export type MemexResultCardSnippet =
     | string
