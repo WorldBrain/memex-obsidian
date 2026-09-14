@@ -210,7 +210,6 @@ export const OBSIDIAN_IMPORT_CONTENT_TYPE_DEFINITIONS: ImportContentTypeDefiniti
             { path: 'published_at', label: 'Published time in milliseconds' },
             { path: 'transcript', label: 'Media transcript' },
         ]),
-        defineContentType('snapchat', 'Snapchat item', SOCIAL_PLACEHOLDERS),
         defineContentType('chatgpt', 'ChatGPT conversation', WEB_PLACEHOLDERS),
         defineContentType('claude', 'Claude conversation', WEB_PLACEHOLDERS),
         defineContentType('annotation', 'Annotation', [

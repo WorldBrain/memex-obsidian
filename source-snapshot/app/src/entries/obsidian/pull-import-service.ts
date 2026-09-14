@@ -787,7 +787,6 @@ function buildContentFirstDefaultTemplate(
             ])
         case 'instagram':
         case 'pinterest':
-        case 'snapchat':
             return buildTemplate([
                 '# {{title}}',
                 '',
